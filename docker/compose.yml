@@ -14,7 +14,10 @@ services:
     working_dir: /ws
     environment:
       RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
-      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-1}
+      # CycloneDDS config (lo + WiFi unicast, Domain 1) so the container sees the
+      # robot's graph. Override the file with CYCLONEDDS_CONFIG=<name under conf/>.
+      CYCLONEDDS_URI: file:///ws/conf/${CYCLONEDDS_CONFIG:-cyclonedds.xml}
       # r2r generates typesupport bindings at build time for these packages only.
       # No automatic dependency resolution: nested packages must be listed too.
       IDL_PACKAGE_FILTER: "builtin_interfaces;std_msgs;geometry_msgs;sensor_msgs;nav_msgs;tf2_msgs;visualization_msgs;map_msgs;rosgraph_msgs;shape_msgs;std_srvs;livox_ros_driver2"

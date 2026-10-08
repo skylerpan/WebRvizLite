@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  CycloneDDS config for WebRvizLite running on the robot (Jetson) when a remote
+  viewer (laptop) must see the graph over WiFi.
+
+  Transport is UDP unicast on both `lo` (robot-internal traffic) and the WiFi
+  NIC; multicast stays off. Cyclone 0.10 drops the 127.0.0.1 locator it
+  receives from a participant on another host, so advertising `lo` alongside
+  the WiFi address is safe.
+
+  Loaded by docker/compose.yml for the `dev` service via
+    CYCLONEDDS_URI=file:///ws/conf/cyclonedds.xml
+  Pick a different file under conf/ with  CYCLONEDDS_CONFIG=<name>.xml
+  (e.g. CYCLONEDDS_CONFIG=other.xml make docker-run-ros).
+
+  NOTE: once Discovery/Peers is set, Cyclone no longer adds the local host to the
+  SPDP destinations by itself, so the 127.0.0.1 peer below is what keeps the
+  robot's own nodes discovering each other. Do not remove it.
+-->
+<CycloneDDS
+  xmlns="https://cdds.io/config"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd"
+>
+    <Domain Id="1">
+        <General>
+            <AllowMulticast>false</AllowMulticast>
+            <Interfaces>
+                <!-- Robot-internal traffic stays on loopback (highest priority). -->
+                <NetworkInterface name="lo" priority="5"/>
+                <!-- WiFi NIC of the Jetson. presence_required=false lets the
+                     stack start even when WiFi is down / not yet associated. -->
+                <NetworkInterface name="wlP1p1s0" priority="10" presence_required="false"/>
+            </Interfaces>
+        </General>
+        <Discovery>
+            <ParticipantIndex>auto</ParticipantIndex>
+            <MaxAutoParticipantIndex>60</MaxAutoParticipantIndex>
+            <Peers>
+                <!-- Local nodes discover each other via lo (required, see header). -->
+                <Peer address="127.0.0.1"/>
+                <!-- Remote viewer host (laptop). -->
+                <Peer address="10.8.100.160"/>
+            </Peers>
+        </Discovery>
+        <Tracing>
+            <Verbosity>config</Verbosity>
+            <OutputFile>stdout</OutputFile>
+        </Tracing>
+        <Internal>
+            <Watermarks>
+                <WhcHigh>500kB</WhcHigh>
+            </Watermarks>
+        </Internal>
+    </Domain>
+</CycloneDDS>
