@@ -107,13 +107,23 @@ export class MapDisplay extends RosTopicDisplayBase<DataMessage> {
   private resubscribeUpdates() {
     this.unsubscribeUpdates();
     if (!this.context || !this.enabled() || !this.updateTopic.value()) return;
-    this.updateSubscriptionId = this.context.bridge.subscribe(this.updateTopic.value(), 'map_msgs/msg/OccupancyGridUpdate', this.updateTopic.qos(), 'occupancy_grid_update', (m) => this.processUpdate(m));
+    this.updateSubscriptionId = this.context.bridge.subscribe(
+      this.updateTopic.value(), 'map_msgs/msg/OccupancyGridUpdate', this.updateTopic.qos(), 'occupancy_grid_update',
+      (m) => this.processUpdate(m),
+      undefined,
+      // Nav2 sends most costmap changes only on this topic (always_send_full_costmap
+      // is false by default), so a failed subscription must be visible, not just logged.
+      (message) => this.setStatus('error', 'Update Topic', message),
+    );
+    this.setStatus('ok', 'Update Topic', 'OK');
   }
 
   private unsubscribeUpdates() {
     if (this.updateSubscriptionId !== null && this.context) {
       this.context.bridge.unsubscribe(this.updateSubscriptionId);
       this.updateSubscriptionId = null;
+      this.deleteStatus('Update Topic');
+      this.deleteStatus('Update');
     }
   }
 

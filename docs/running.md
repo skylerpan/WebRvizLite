@@ -25,8 +25,39 @@ a sourced ROS 2 environment at build time.
 **Fix:** on the host use `--mock` (synthetic `/scan`, `/tf`, `/tf_static`,
 `/clock`; `-d fixtures/mock_scene.rviz` for the full Tier 0 scene). For real
 ROS 2 build and run inside the container: `make docker-build-ros`,
-`make docker-run-ros`. The bridge can only subscribe to packages listed in
+`make docker-run-ros`. The bridge can only subscribe to packages that are
+installed in the image (`docker/Dockerfile`) and listed in
 `IDL_PACKAGE_FILTER` (`docker/compose.yml`).
+
+## Costmap only refreshes when the robot moves
+
+**Symptom:** a Map display on a Nav2 costmap (`.../local_costmap/costmap`)
+shows a new grid only when the robot moves; obstacles appearing while it is
+stationary never show up. The browser console has
+`[bridge] sub N: unknown message type: map_msgs/msg/OccupancyGridUpdate`, the
+server log `subscribe failed ... type_name=map_msgs/msg/OccupancyGridUpdate`,
+and the display status shows `Update Topic: unknown message type ...`.
+
+**Cause:** Nav2's `always_send_full_costmap` defaults to `false`: the full
+`OccupancyGrid` is published only when the grid's origin or size changes (for a
+rolling local costmap, when the robot moves). Everything else goes out as
+`map_msgs/OccupancyGridUpdate` patches on `<topic>_updates`, which the Map
+display subscribes to automatically. That subscription fails when the bridge
+was built without `map_msgs` typesupport (the package is not part of
+`ros-base`; it is installed by `docker/Dockerfile`).
+
+**Fix:** rebuild the image and the bridge so r2r generates the `map_msgs`
+bindings:
+
+```sh
+make docker-build
+docker compose -f docker/compose.yml run --rm dev cargo clean --release -p r2r_msg_gen -p r2r
+make docker-build-ros
+```
+
+Then `ros2 topic info -v <topic>_updates` should list a `webrvizlite`
+subscriber. Alternatively set `always_send_full_costmap: true` on the Nav2
+costmap nodes, at the cost of sending the whole grid every cycle.
 
 ## Container server port: README says 8766, Makefile uses 8765
 

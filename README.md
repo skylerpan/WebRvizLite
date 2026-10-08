@@ -62,8 +62,11 @@ make docker-mock-scene # rclpy publisher of the same synthetic scene, for testin
 
 The container uses host networking so DDS discovery works against the robot's
 graph. Set `ROS_DOMAIN_ID` in the environment if needed. r2r resolves message
-typesupport at build time: the packages listed in `IDL_PACKAGE_FILTER`
-(`docker/compose.yml`) are the only types the bridge can subscribe to.
+typesupport at build time: the bridge can only subscribe to types whose package
+is both installed in the image (`docker/Dockerfile`; `ros-base` lacks e.g.
+`map_msgs`) and listed in `IDL_PACKAGE_FILTER` (`docker/compose.yml`). After
+adding a package, clear r2r's generated bindings before rebuilding:
+`docker compose -f docker/compose.yml run --rm dev cargo clean --release -p r2r_msg_gen -p r2r`.
 `livox_ros_driver2/msg/CustomMsg` (Livox native point clouds, `xfer_format: 1`)
 is covered by a message-only copy of the upstream package in `docker/livox_msgs`
 that the image builds into `/opt/livox_ws`; the display class is

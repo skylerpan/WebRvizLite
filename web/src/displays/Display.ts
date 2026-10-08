@@ -135,7 +135,12 @@ export abstract class RosTopicDisplayBase<Msg> extends DisplayBase implements Ro
       return;
     }
     const type = this.topic.messageTypes[0];
-    this.subscriptionId = this.context.bridge.subscribe(topic, type, this.qos(), this.decoder, (m) => measure(`msg ${this.name()}`, () => this.processMessage(m as Msg)), this.decoderOptions());
+    this.subscriptionId = this.context.bridge.subscribe(
+      topic, type, this.qos(), this.decoder,
+      (m) => measure(`msg ${this.name()}`, () => this.processMessage(m as Msg)),
+      this.decoderOptions(),
+      (message) => this.setStatus('error', 'Topic', message),
+    );
     this.setStatus('ok', 'Topic', 'OK');
   }
 

@@ -142,6 +142,7 @@ async fn handle(
                 type_name,
                 qos,
             };
+            let (topic, type_name) = (key.topic.clone(), key.type_name.clone());
             let hub = state.hub.clone();
             let slot_wake = wake.clone();
             // subscribe_raw may block briefly on the ROS node mutex.
@@ -156,6 +157,10 @@ async fn handle(
                     wake.notify_one();
                 }
                 Err(e) => {
+                    // The client only shows this in its display status; log it here
+                    // too so an unsupported type (package missing at build time) is
+                    // visible on the server side.
+                    tracing::warn!(id, %topic, %type_name, error = %e, "subscribe failed");
                     let _ = ctl_tx
                         .send(ServerMessage::Error {
                             id: Some(id),

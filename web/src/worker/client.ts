@@ -4,6 +4,7 @@ import { TfSnapshot } from '../render/tf';
 import { measure } from '../render/perf';
 
 export type DataHandler = (msg: DataMessage) => void;
+export type ErrorHandler = (message: string) => void;
 
 /**
  * Main-thread handle to the bridge worker. One instance per app; displays get
@@ -13,6 +14,7 @@ export class BridgeClient {
   private readonly worker: Worker;
   private nextId = 1000; // ids below are reserved for the worker's own subscriptions
   private readonly handlers = new Map<number, DataHandler>();
+  private readonly errorHandlers = new Map<number, ErrorHandler>();
   readonly tf = new TfSnapshot();
 
   readonly wsState;
@@ -64,6 +66,7 @@ export class BridgeClient {
       case 'error':
         this.setLastError(msg.message);
         console.warn('[bridge]', msg.id === null ? '' : `sub ${msg.id}:`, msg.message);
+        if (msg.id !== null) this.errorHandlers.get(msg.id)?.(msg.message);
         break;
       case 'stats':
         this.setStats(msg.subscriptions);
@@ -81,16 +84,22 @@ export class BridgeClient {
     this.worker.postMessage(msg);
   }
 
-  /** Subscribes and returns the subscription id. `onData` receives decoded messages. */
-  subscribe(topic: string, msgType: string, qos: QosProfile, decoder: Decoder = 'none', onData?: DataHandler, options?: Record<string, unknown>): number {
+  /**
+   * Subscribes and returns the subscription id. `onData` receives decoded
+   * messages; `onError` the server's reason when the subscription could not be
+   * created (e.g. a message type the bridge was built without).
+   */
+  subscribe(topic: string, msgType: string, qos: QosProfile, decoder: Decoder = 'none', onData?: DataHandler, options?: Record<string, unknown>, onError?: ErrorHandler): number {
     const id = this.nextId++;
     if (onData) this.handlers.set(id, onData);
+    if (onError) this.errorHandlers.set(id, onError);
     this.send({ type: 'subscribe', id, topic, msgType, qos, decoder, options });
     return id;
   }
 
   unsubscribe(id: number) {
     this.handlers.delete(id);
+    this.errorHandlers.delete(id);
     this.send({ type: 'unsubscribe', id });
   }
 
