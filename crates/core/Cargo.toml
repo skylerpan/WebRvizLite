@@ -11,5 +11,5 @@ std = ["serde/std", "thiserror/std", "dep:serde_json"]
 [dependencies]
 serde = { workspace = true, features = ["alloc"] }
 libm = "0.2"
-serde_json = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true, features = ["std"] }
 thiserror = { workspace = true }
