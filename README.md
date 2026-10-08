@@ -23,8 +23,13 @@ and (from M1 on) a sourced ROS 2 environment for the r2r bridge.
 
 ```sh
 make build            # wasm-pack → vite build → cargo build --release (mock transport only)
-./target/release/webrvizlite --mock --port 8765
+make mock-rust        # rebuild, then run the server with its built-in Rust mock scene (no ROS)
 ```
+
+Two mocks exist: `make mock-rust` is the server's own Rust `MockTransport`
+(host, nothing on ROS, full-scale scene); `make mock-ros` is an rclpy node in
+the container publishing the same scene on real ROS 2 topics for the r2r
+bridge (see below).
 
 Build fails to load the workspace on a newer cargo? See
 [`docs/build-troubleshooting.md`](docs/build-troubleshooting.md).
@@ -59,7 +64,7 @@ make docker-build     # builds webrvizlite-dev (ros:humble-ros-base + Rust + Nod
 make docker-shell     # interactive shell with ROS sourced, repo mounted at /ws
 make docker-build-ros # wasm + web + cargo --features r2r, inside the container
 make docker-run-ros   # ROS-enabled server on http://127.0.0.1:8766 (host network)
-make docker-mock-scene # rclpy publisher of the same synthetic scene, for testing
+make mock-ros         # rclpy publisher of the same scene on real ROS 2 topics, for testing
 ```
 
 The container uses host networking so DDS discovery works against the robot's

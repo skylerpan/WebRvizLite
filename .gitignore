@@ -1,5 +1,6 @@
 # Rust
 /target/
+/target-host/
 **/*.rs.bk
 
 # Node / Vite
