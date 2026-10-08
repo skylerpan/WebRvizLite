@@ -122,8 +122,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "WebRvizLite listening on http://{}/",
         listener.local_addr()?
     );
-    axum::serve(listener, app).await?;
+    tokio::select! {
+        r = axum::serve(listener, app) => r?,
+        () = shutdown_signal() => tracing::info!("shutdown signal received"),
+    }
+    // Returning ends the process (r2r spin thread, sessions, ROS subscriptions);
+    // browsers reconnect on their own. A graceful shutdown would wait for the
+    // long-lived WebSockets and never finish.
     Ok(())
+}
+
+/// Resolves on Ctrl+C or, on Unix, SIGTERM (`docker stop`).
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::error!(%e, "failed to install Ctrl+C handler");
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(e) => {
+                tracing::error!(%e, "failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        () = ctrl_c => {}
+        () = terminate => {}
+    }
 }
 
 /// Save (Ctrl+S) writes the `-d` file back in place (spec §5.1).

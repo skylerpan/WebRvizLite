@@ -59,6 +59,19 @@ Then `ros2 topic info -v <topic>_updates` should list a `webrvizlite`
 subscriber. Alternatively set `always_send_full_costmap: true` on the Nav2
 costmap nodes, at the cost of sending the whole grid every cycle.
 
+## Ctrl+C does not stop `make docker-run-ros`
+
+**Symptom:** Ctrl+C in `make docker-run-ros` (or any `docker compose run --rm
+dev ...` target) does nothing; `docker stop` takes the full 10 s timeout.
+
+**Cause:** `docker/entrypoint.sh` `exec`s the command, so it runs as PID 1 in
+the container, and Linux drops SIGINT/SIGTERM sent to a PID 1 that has no
+handler for them. The server used to install none.
+
+**Fix:** `docker/compose.yml` sets `init: true` (tini becomes PID 1 and
+forwards signals) and the server exits on Ctrl+C / SIGTERM. If an old
+container is stuck: `docker kill $(docker ps -q --filter name=docker-dev-run)`.
+
 ## Container server port: README says 8766, Makefile uses 8765
 
 **Symptom:** `make docker-run-ros` binds 8765, not 8766 as the README states.

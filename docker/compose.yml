@@ -11,6 +11,9 @@ services:
     # port (8765) is reachable without mapping.
     network_mode: host
     ipc: host
+    # tini as PID 1 so Ctrl+C / docker stop reach the command (a bare PID 1
+    # without a handler ignores SIGINT and SIGTERM).
+    init: true
     working_dir: /ws
     environment:
       RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
