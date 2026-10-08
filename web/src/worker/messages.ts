@@ -47,7 +47,14 @@ export type Decoder =
   | 'pose_stamped'
   | 'pose_array'
   | 'marker'
-  | 'marker_array';
+  | 'marker_array'
+  | 'pose_with_covariance'
+  | 'odometry'
+  | 'point_stamped'
+  | 'polygon'
+  | 'grid_cells'
+  | 'range'
+  | 'string';
 
 /** Per-subscription receive statistics, reported by the worker on request. */
 export interface SubscriptionStats {

@@ -5,6 +5,7 @@
 #![allow(clippy::clone_on_copy)]
 
 use wasm_bindgen::prelude::*;
+use webrvizlite_core::covariance;
 use webrvizlite_core::math::Transform;
 use webrvizlite_core::msgs;
 use webrvizlite_core::pointcloud::{self, ColorOptions, Transformer};
@@ -326,8 +327,249 @@ fn poses_data(
     }
 }
 
+/// Pose with covariance in the fixed frame, plus the ready-to-draw covariance
+/// visual (rviz CovarianceVisual): `ellipsoid` = [sx, sy, sz, qx, qy, qz, qw]
+/// (half axes already scaled, orientation composed with the fixed-frame
+/// rotation; empty when the position covariance is zero / invalid) and
+/// `orientation` = 3 × [axis, a, b, angle] discs (3-D) or [half_angle] (2-D).
+#[wasm_bindgen(getter_with_clone)]
+pub struct PoseCovData {
+    pub frame_id: String,
+    pub stamp_ns: u64,
+    pub tf_status: u8,
+    pub child_frame_id: String,
+    pub positions: Vec<f32>,
+    pub orientations: Vec<f32>,
+    pub covariance: Vec<f64>,
+    pub ellipsoid: Vec<f32>,
+    pub orientation: Vec<f32>,
+    pub is_2d: bool,
+}
+
+/// Points (xyz × n) in the fixed frame.
+#[wasm_bindgen(getter_with_clone)]
+pub struct PointsData {
+    pub frame_id: String,
+    pub stamp_ns: u64,
+    pub tf_status: u8,
+    pub positions: Vec<f32>,
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct GridCellsData {
+    pub frame_id: String,
+    pub stamp_ns: u64,
+    pub tf_status: u8,
+    pub positions: Vec<f32>,
+    pub cell_width: f32,
+    pub cell_height: f32,
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct RangeData {
+    pub frame_id: String,
+    pub stamp_ns: u64,
+    pub tf_status: u8,
+    /// Sensor pose in the fixed frame: xyz + xyzw.
+    pub positions: Vec<f32>,
+    pub orientations: Vec<f32>,
+    pub range: f32,
+    pub field_of_view: f32,
+    pub min_range: f32,
+    pub max_range: f32,
+}
+
+#[derive(serde::Deserialize)]
+struct CovarianceOptions {
+    #[serde(default = "one")]
+    pos_scale: f64,
+    #[serde(default = "one")]
+    ori_scale: f64,
+    #[serde(default = "one")]
+    ori_offset: f64,
+}
+fn one() -> f64 {
+    1.0
+}
+
+fn pose_cov_data(
+    buf: &tf::TfBuffer,
+    fixed_frame: &str,
+    header: &msgs::Header,
+    child_frame_id: &str,
+    pose: &Transform,
+    cov: &[f64; 36],
+    options_json: &str,
+) -> PoseCovData {
+    let opts: CovarianceOptions = serde_json::from_str(options_json).unwrap_or(CovarianceOptions {
+        pos_scale: 1.0,
+        ori_scale: 1.0,
+        ori_offset: 1.0,
+    });
+    let stamp_ns = header.stamp.to_ns();
+    let (tf, tf_status) = transform_for(buf, fixed_frame, &header.frame_id, stamp_ns);
+    let t = tf.mul(pose);
+    let ellipsoid = covariance::position_ellipsoid(cov, opts.pos_scale)
+        .map(|e| {
+            let q = webrvizlite_core::math::quat_mul(tf.q, e.quat);
+            vec![
+                e.half_axes[0] as f32,
+                e.half_axes[1] as f32,
+                e.half_axes[2] as f32,
+                q[0] as f32,
+                q[1] as f32,
+                q[2] as f32,
+                q[3] as f32,
+            ]
+        })
+        .unwrap_or_default();
+    let orientation = covariance::orientation_visual(cov, opts.ori_scale, opts.ori_offset)
+        .map(|v| covariance::orientation_to_vec(&v))
+        .unwrap_or_default();
+    PoseCovData {
+        frame_id: header.frame_id.clone(),
+        stamp_ns,
+        tf_status,
+        child_frame_id: child_frame_id.into(),
+        positions: t.t.iter().map(|v| *v as f32).collect(),
+        orientations: t.q.iter().map(|v| *v as f32).collect(),
+        covariance: cov.to_vec(),
+        ellipsoid,
+        orientation,
+        is_2d: covariance::is_2d(cov),
+    }
+}
+
+fn points_in_fixed_frame(tf: &Transform, xyz: &[f32]) -> Vec<f32> {
+    let mut out = Vec::with_capacity(xyz.len());
+    for p in xyz.as_chunks::<3>().0 {
+        let q = tf.apply_point([p[0] as f64, p[1] as f64, p[2] as f64]);
+        out.extend(q.iter().map(|v| *v as f32));
+    }
+    out
+}
+
+/// std_msgs/String payload (robot_description).
+#[wasm_bindgen(js_name = decodeString)]
+pub fn decode_string(bytes: &[u8]) -> Result<String, JsError> {
+    msgs::std_msgs::decode_string(bytes).map_err(|e| JsError::new(&e.to_string()))
+}
+
 #[wasm_bindgen]
 impl TfBuffer {
+    /// nav_msgs/OccupancyGrid.
+    /// geometry_msgs/PoseWithCovarianceStamped → pose + covariance visual in the fixed frame.
+    #[wasm_bindgen(js_name = decodePoseWithCovariance)]
+    pub fn decode_pose_with_covariance(
+        &self,
+        bytes: &[u8],
+        fixed_frame: &str,
+        options_json: &str,
+    ) -> Result<PoseCovData, JsError> {
+        let p = msgs::geometry::decode_pose_with_covariance_stamped(bytes)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(pose_cov_data(
+            &self.inner,
+            fixed_frame,
+            &p.header,
+            "",
+            &p.pose,
+            &p.covariance,
+            options_json,
+        ))
+    }
+
+    /// nav_msgs/Odometry → pose + covariance visual in the fixed frame.
+    #[wasm_bindgen(js_name = decodeOdometry)]
+    pub fn decode_odometry(
+        &self,
+        bytes: &[u8],
+        fixed_frame: &str,
+        options_json: &str,
+    ) -> Result<PoseCovData, JsError> {
+        let o = msgs::nav::decode_odometry(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(pose_cov_data(
+            &self.inner,
+            fixed_frame,
+            &o.header,
+            &o.child_frame_id,
+            &o.pose,
+            &o.pose_covariance,
+            options_json,
+        ))
+    }
+
+    /// geometry_msgs/PointStamped → one pose (identity orientation) in the fixed frame.
+    #[wasm_bindgen(js_name = decodePointStamped)]
+    pub fn decode_point_stamped(
+        &self,
+        bytes: &[u8],
+        fixed_frame: &str,
+    ) -> Result<PosesData, JsError> {
+        let p = msgs::geometry::decode_point_stamped(bytes)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        let pose = Transform::new(p.point, [0.0, 0.0, 0.0, 1.0]);
+        Ok(poses_data(&self.inner, fixed_frame, &p.header, &[pose]))
+    }
+
+    /// geometry_msgs/PolygonStamped → vertices in the fixed frame.
+    #[wasm_bindgen(js_name = decodePolygonStamped)]
+    pub fn decode_polygon_stamped(
+        &self,
+        bytes: &[u8],
+        fixed_frame: &str,
+    ) -> Result<PointsData, JsError> {
+        let p = msgs::geometry::decode_polygon_stamped(bytes)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        let stamp_ns = p.header.stamp.to_ns();
+        let (tf, tf_status) = transform_for(&self.inner, fixed_frame, &p.header.frame_id, stamp_ns);
+        Ok(PointsData {
+            frame_id: p.header.frame_id,
+            stamp_ns,
+            tf_status,
+            positions: points_in_fixed_frame(&tf, &p.points),
+        })
+    }
+
+    /// nav_msgs/GridCells → cell centres in the fixed frame.
+    #[wasm_bindgen(js_name = decodeGridCells)]
+    pub fn decode_grid_cells(
+        &self,
+        bytes: &[u8],
+        fixed_frame: &str,
+    ) -> Result<GridCellsData, JsError> {
+        let g = msgs::nav::decode_grid_cells(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+        let stamp_ns = g.header.stamp.to_ns();
+        let (tf, tf_status) = transform_for(&self.inner, fixed_frame, &g.header.frame_id, stamp_ns);
+        Ok(GridCellsData {
+            frame_id: g.header.frame_id,
+            stamp_ns,
+            tf_status,
+            positions: points_in_fixed_frame(&tf, &g.cells),
+            cell_width: g.cell_width,
+            cell_height: g.cell_height,
+        })
+    }
+
+    /// sensor_msgs/Range → sensor pose in the fixed frame + the cone parameters.
+    #[wasm_bindgen(js_name = decodeRange)]
+    pub fn decode_range(&self, bytes: &[u8], fixed_frame: &str) -> Result<RangeData, JsError> {
+        let r = msgs::sensor::decode_range(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+        let stamp_ns = r.header.stamp.to_ns();
+        let (tf, tf_status) = transform_for(&self.inner, fixed_frame, &r.header.frame_id, stamp_ns);
+        Ok(RangeData {
+            frame_id: r.header.frame_id,
+            stamp_ns,
+            tf_status,
+            positions: tf.t.iter().map(|v| *v as f32).collect(),
+            orientations: tf.q.iter().map(|v| *v as f32).collect(),
+            range: r.range,
+            field_of_view: r.field_of_view,
+            min_range: r.min_range,
+            max_range: r.max_range,
+        })
+    }
+
     /// nav_msgs/OccupancyGrid. The origin stays in the message frame; the main
     /// thread looks the frame up every render so the map follows tf.
     #[wasm_bindgen(js_name = decodeOccupancyGrid)]

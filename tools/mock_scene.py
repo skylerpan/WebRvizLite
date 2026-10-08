@@ -8,7 +8,9 @@ driving a 2 m circle, and every topic `fixtures/mock_scene.rviz` subscribes to:
 
   /tf 30 Hz · /tf_static · /clock 20 Hz · /scan 10 Hz · /map (latched) ·
   /plan, /goal_pose, /particlecloud 2 Hz · /points 10 Hz (PointCloud2) ·
-  /markers, /marker 1 Hz · /livox/lidar 10 Hz (livox_ros_driver2/CustomMsg)
+  /markers, /marker 1 Hz · /livox/lidar 10 Hz (livox_ros_driver2/CustomMsg) ·
+  Tier 1: /odom 20 Hz · /amcl_pose, /grid_cells 1 Hz · /clicked_point_echo 2 Hz ·
+  /footprint 5 Hz · /range 10 Hz
 
 Sizes default smaller than the Rust mock because rclpy serialises in Python:
 --points 100000, --cubes 5000, --livox-points 4000.
@@ -23,13 +25,13 @@ import time
 import numpy as np
 import rclpy
 from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import Point, Pose, PoseArray, PoseStamped, TransformStamped
+from geometry_msgs.msg import Point, Point32, PointStamped, Polygon, PolygonStamped, Pose, PoseArray, PoseStamped, PoseWithCovarianceStamped, TransformStamped
 from livox_ros_driver2.msg import CustomMsg, CustomPoint
-from nav_msgs.msg import OccupancyGrid, Path
+from nav_msgs.msg import GridCells, OccupancyGrid, Odometry, Path
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rosgraph_msgs.msg import Clock
-from sensor_msgs.msg import LaserScan, PointCloud2, PointField
+from sensor_msgs.msg import LaserScan, PointCloud2, PointField, Range
 from std_msgs.msg import ColorRGBA
 from tf2_msgs.msg import TFMessage
 from visualization_msgs.msg import Marker, MarkerArray
@@ -115,6 +117,12 @@ class MockScene(Node):
         self.markers_pub = self.create_publisher(MarkerArray, '/markers', 2)
         self.marker_pub = self.create_publisher(Marker, '/marker', 2)
         self.livox_pub = self.create_publisher(CustomMsg, '/livox/lidar', sensor_qos)
+        self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
+        self.amcl_pub = self.create_publisher(PoseWithCovarianceStamped, '/amcl_pose', 2)
+        self.point_pub = self.create_publisher(PointStamped, '/clicked_point_echo', 2)
+        self.footprint_pub = self.create_publisher(PolygonStamped, '/footprint', 2)
+        self.grid_cells_pub = self.create_publisher(GridCells, '/grid_cells', 2)
+        self.range_pub = self.create_publisher(Range, '/range', 10)
 
         self.n_points = int(math.sqrt(n_points)) ** 2
         self.n_cubes = n_cubes
@@ -135,6 +143,11 @@ class MockScene(Node):
         self.create_timer(0.1, self.publish_fast)
         self.create_timer(0.5, self.publish_nav)
         self.create_timer(1.0, self.publish_markers)
+        self.create_timer(0.05, self.publish_odom)
+        self.create_timer(0.1, self.publish_range)
+        self.create_timer(0.2, self.publish_footprint)
+        self.create_timer(0.5, self.publish_point)
+        self.create_timer(1.0, self.publish_covariance_and_cells)
         self.get_logger().info(
             f'publishing mock scene: /points {self.n_points} pts, /markers {n_cubes} cubes, /livox/lidar {n_livox} pts')
 
@@ -302,6 +315,73 @@ class MockScene(Node):
             r = 0.05 + 0.25 * i / 60
             pa.poses.append(pose_msg(x + r * math.cos(a), y + r * math.sin(a), yaw + 0.3 * math.sin(a * 0.5)))
         self.particles_pub.publish(pa)
+
+    # ---- Tier 1 topics ------------------------------------------------------
+
+    @staticmethod
+    def covariance(diag, xy=0.0):
+        cov = [0.0] * 36
+        for i, v in enumerate(diag):
+            cov[i * 6 + i] = float(v)
+        cov[1] = cov[6] = float(xy)
+        return cov
+
+    def publish_odom(self):
+        x, y, yaw = self.pose()
+        m = Odometry()
+        m.header.stamp, m.header.frame_id, m.child_frame_id = self.now(), 'odom', 'base_link'
+        m.pose.pose = pose_msg(x, y, yaw)
+        m.pose.covariance = self.covariance([0.02, 0.02, 0, 0, 0, 0.01])
+        m.twist.twist.linear.x = CIRCLE_RADIUS * math.tau / CIRCLE_PERIOD_S
+        m.twist.twist.angular.z = math.tau / CIRCLE_PERIOD_S
+        m.twist.covariance = self.covariance([0.001] * 6)
+        self.odom_pub.publish(m)
+
+    def publish_range(self):
+        x, y, yaw = self.pose()
+        m = Range()
+        m.header.stamp, m.header.frame_id = self.now(), 'laser'
+        m.radiation_type, m.field_of_view, m.min_range, m.max_range = Range.ULTRASOUND, 0.5, 0.05, 4.0
+        m.range = float(min(4.0, ray_to_walls(x + 0.2 * math.cos(yaw), y + 0.2 * math.sin(yaw), yaw)))
+        self.range_pub.publish(m)
+
+    def publish_footprint(self):
+        m = PolygonStamped()
+        m.header.stamp, m.header.frame_id = self.now(), 'base_link'
+        pts = [(0.30, 0.20), (0.25, 0.25), (-0.25, 0.25), (-0.30, 0.20), (-0.30, -0.20), (-0.25, -0.25), (0.25, -0.25), (0.30, -0.20)]
+        m.polygon = Polygon(points=[Point32(x=float(px), y=float(py), z=0.0) for px, py in pts])
+        self.footprint_pub.publish(m)
+
+    def publish_point(self):
+        x, y, yaw = self.pose()
+        a = yaw - math.pi / 2 + math.pi
+        t = time.monotonic() * 0.6
+        m = PointStamped()
+        m.header.stamp, m.header.frame_id = self.now(), 'map'
+        m.point = point(CIRCLE_RADIUS * math.cos(a) + 0.5 * math.cos(t), CIRCLE_RADIUS * math.sin(a) + 0.5 * math.sin(t), 0.3 + 0.1 * math.sin(2 * t))
+        self.point_pub.publish(m)
+
+    def publish_covariance_and_cells(self):
+        x, y, yaw = self.pose()
+        stamp = self.now()
+        wobble = math.sin(self.phase * 0.07) * 0.05
+        m = PoseWithCovarianceStamped()
+        m.header.stamp, m.header.frame_id = stamp, 'map'
+        m.pose.pose = pose_msg(x + wobble, y - wobble, yaw + 0.05 * wobble)
+        m.pose.covariance = self.covariance([0.05, 0.08, 0.01, 0.01, 0.02, 0.05], 0.02)
+        self.amcl_pub.publish(m)
+
+        g = GridCells()
+        g.header.stamp, g.header.frame_id = stamp, 'map'
+        g.cell_width = g.cell_height = 0.1
+        r0 = 1.0 + 0.3 * math.sin(time.monotonic() * 0.5)
+        for i in range(-20, 20):
+            for j in range(-20, 20):
+                cx, cy = i * 0.1 + 0.05, j * 0.1 + 0.05
+                d = math.hypot(cx, cy)
+                if r0 <= d < r0 + 0.25:
+                    g.cells.append(Point32(x=cx, y=cy, z=0.0))
+        self.grid_cells_pub.publish(g)
 
     # ---- 1 Hz: markers ------------------------------------------------------
 

@@ -4,7 +4,7 @@
  * header (spec §3: the main thread never sees message objects).
  */
 
-import type { TfBuffer } from '../wasm/pkg/webrvizlite';
+import { decodeString, type TfBuffer } from '../wasm/pkg/webrvizlite';
 import type { Subscription } from './worker';
 
 export interface DecodeResult {
@@ -84,6 +84,70 @@ function posesResult(p: { frame_id: string; stamp_ns: bigint; tf_status: number;
     transfer: [p.positions.buffer, p.orientations.buffer],
   };
 }
+
+/** Pose + covariance visual (PoseWithCovariance / Odometry); see wasm PoseCovData. */
+export interface PoseCovMsg extends PosesMsg {
+  childFrameId: string;
+  covariance: Float64Array;
+  /** [sx, sy, sz, qx, qy, qz, qw] in the fixed frame, or empty. */
+  ellipsoid: Float32Array;
+  /** 3 × [axis, a, b, angle] discs, or [halfAngle] when 2-D, or empty. */
+  orientation: Float32Array;
+  is2d: boolean;
+}
+
+export interface PointsMsg {
+  count: number;
+  positions: Float32Array;
+}
+
+export interface GridCellsMsg extends PointsMsg {
+  cellWidth: number;
+  cellHeight: number;
+}
+
+export interface RangeMsg extends PosesMsg {
+  range: number;
+  fieldOfView: number;
+  minRange: number;
+  maxRange: number;
+}
+
+function covarianceOptions(sub: Subscription): string {
+  return JSON.stringify(sub.options.covariance ?? {});
+}
+
+function poseCovResult(p: { frame_id: string; stamp_ns: bigint; tf_status: number; child_frame_id: string; positions: Float32Array; orientations: Float32Array; covariance: Float64Array; ellipsoid: Float32Array; orientation: Float32Array; is_2d: boolean }, fixedFrame: string): DecodeResult {
+  const data: PoseCovMsg = {
+    count: 1, positions: p.positions, orientations: p.orientations, childFrameId: p.child_frame_id,
+    covariance: p.covariance, ellipsoid: p.ellipsoid, orientation: p.orientation, is2d: p.is_2d,
+  };
+  return {
+    meta: { stampNs: Number(p.stamp_ns), frameId: p.frame_id, ...tfMeta(p.tf_status, p.frame_id, fixedFrame) },
+    data,
+    transfer: [p.positions.buffer, p.orientations.buffer, p.covariance.buffer, p.ellipsoid.buffer, p.orientation.buffer],
+  };
+}
+
+registerDecoder('pose_with_covariance', (sub, payload, tf, fixedFrame) => poseCovResult(tf.decodePoseWithCovariance(payload, fixedFrame, covarianceOptions(sub)), fixedFrame));
+registerDecoder('odometry', (sub, payload, tf, fixedFrame) => poseCovResult(tf.decodeOdometry(payload, fixedFrame, covarianceOptions(sub)), fixedFrame));
+registerDecoder('point_stamped', (_sub, payload, tf, fixedFrame) => posesResult(tf.decodePointStamped(payload, fixedFrame), fixedFrame));
+registerDecoder('polygon', (_sub, payload, tf, fixedFrame) => {
+  const p = tf.decodePolygonStamped(payload, fixedFrame);
+  const data: PointsMsg = { count: p.positions.length / 3, positions: p.positions };
+  return { meta: { stampNs: Number(p.stamp_ns), frameId: p.frame_id, ...tfMeta(p.tf_status, p.frame_id, fixedFrame) }, data, transfer: [p.positions.buffer] };
+});
+registerDecoder('grid_cells', (_sub, payload, tf, fixedFrame) => {
+  const g = tf.decodeGridCells(payload, fixedFrame);
+  const data: GridCellsMsg = { count: g.positions.length / 3, positions: g.positions, cellWidth: g.cell_width, cellHeight: g.cell_height };
+  return { meta: { stampNs: Number(g.stamp_ns), frameId: g.frame_id, ...tfMeta(g.tf_status, g.frame_id, fixedFrame) }, data, transfer: [g.positions.buffer] };
+});
+registerDecoder('range', (_sub, payload, tf, fixedFrame) => {
+  const r = tf.decodeRange(payload, fixedFrame);
+  const data: RangeMsg = { count: 1, positions: r.positions, orientations: r.orientations, range: r.range, fieldOfView: r.field_of_view, minRange: r.min_range, maxRange: r.max_range };
+  return { meta: { stampNs: Number(r.stamp_ns), frameId: r.frame_id, ...tfMeta(r.tf_status, r.frame_id, fixedFrame) }, data, transfer: [r.positions.buffer, r.orientations.buffer] };
+});
+registerDecoder('string', (_sub, payload) => ({ meta: { stampNs: 0, frameId: '', inFixedFrame: true, tfError: null }, data: { text: decodeString(payload) }, transfer: [] }));
 
 registerDecoder('path', (_sub, payload, tf, fixedFrame) => posesResult(tf.decodePath(payload, fixedFrame), fixedFrame));
 registerDecoder('pose_stamped', (_sub, payload, tf, fixedFrame) => posesResult(tf.decodePoseStamped(payload, fixedFrame), fixedFrame));

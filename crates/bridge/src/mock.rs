@@ -51,6 +51,19 @@ pub const CUBE_MARKERS: usize = 5_000;
 pub const PARTICLE_TOPIC: &str = "/particlecloud";
 pub const LIVOX_TOPIC: &str = "/livox/lidar";
 pub const LIVOX_TYPE: &str = "livox_ros_driver2/msg/CustomMsg";
+// Tier 1 topics
+pub const ODOM_TOPIC: &str = "/odom";
+pub const ODOM_TYPE: &str = "nav_msgs/msg/Odometry";
+pub const AMCL_POSE_TOPIC: &str = "/amcl_pose";
+pub const POSE_COV_TYPE: &str = "geometry_msgs/msg/PoseWithCovarianceStamped";
+pub const POINT_TOPIC: &str = "/clicked_point_echo";
+pub const POINT_TYPE: &str = "geometry_msgs/msg/PointStamped";
+pub const FOOTPRINT_TOPIC: &str = "/footprint";
+pub const POLYGON_TYPE: &str = "geometry_msgs/msg/PolygonStamped";
+pub const GRID_CELLS_TOPIC: &str = "/grid_cells";
+pub const GRID_CELLS_TYPE: &str = "nav_msgs/msg/GridCells";
+pub const RANGE_TOPIC: &str = "/range";
+pub const RANGE_TYPE: &str = "sensor_msgs/msg/Range";
 /// Points per Livox frame (a Mid-360 publishes ~20k points per 100 ms).
 pub const LIVOX_POINTS: usize = 24_000;
 /// `livox_frame` sits this high above `base_link`.
@@ -102,6 +115,12 @@ impl MockTransport {
         channels.insert(POINTS_TOPIC, mk(POINTS_TYPE, 2));
         channels.insert(MARKERS_TOPIC, mk(MARKER_ARRAY_TYPE, 2));
         channels.insert(MARKER_TOPIC, mk(MARKER_TYPE, 2));
+        channels.insert(ODOM_TOPIC, mk(ODOM_TYPE, 4));
+        channels.insert(AMCL_POSE_TOPIC, mk(POSE_COV_TYPE, 2));
+        channels.insert(POINT_TOPIC, mk(POINT_TYPE, 2));
+        channels.insert(FOOTPRINT_TOPIC, mk(POLYGON_TYPE, 2));
+        channels.insert(GRID_CELLS_TOPIC, mk(GRID_CELLS_TYPE, 2));
+        channels.insert(RANGE_TOPIC, mk(RANGE_TYPE, 4));
         let this = Arc::new(Self {
             channels,
             published: Mutex::new(HashMap::new()),
@@ -141,6 +160,31 @@ impl MockTransport {
                     .send(encode_marker_array(stamp, pose, phase));
                 t.channel(MARKER_TOPIC)
                     .send(encode_single_marker(stamp, pose, phase));
+                t.channel(AMCL_POSE_TOPIC)
+                    .send(encode_amcl_pose(stamp, pose, phase));
+                t.channel(GRID_CELLS_TOPIC)
+                    .send(encode_grid_cells(stamp, phase));
+            }
+        });
+        let t = this.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(50));
+            let mut phase = 0u32;
+            loop {
+                tick.tick().await;
+                phase = phase.wrapping_add(1);
+                let (stamp, pose) = t.pose_now();
+                t.channel(ODOM_TOPIC).send(encode_odometry(stamp, pose));
+                if phase.is_multiple_of(2) {
+                    t.channel(RANGE_TOPIC).send(encode_range(stamp, pose));
+                }
+                if phase.is_multiple_of(4) {
+                    t.channel(FOOTPRINT_TOPIC).send(encode_footprint(stamp));
+                }
+                if phase.is_multiple_of(10) {
+                    t.channel(POINT_TOPIC)
+                        .send(encode_point_stamped(stamp, pose, phase));
+                }
             }
         });
         let t = this.clone();
@@ -559,6 +603,126 @@ fn encode_path(stamp: Stamp, current: Pose2D) -> Vec<u8> {
             a + std::f64::consts::FRAC_PI_2,
         );
     }
+    w.finish()
+}
+
+fn covariance(w: &mut Writer, diag: [f64; 6], xy: f64) {
+    for (r, d) in diag.iter().enumerate() {
+        for c in 0..6 {
+            let v = if r == c {
+                *d
+            } else if (r == 0 && c == 1) || (r == 1 && c == 0) {
+                xy
+            } else {
+                0.0
+            };
+            w.f64(v);
+        }
+    }
+}
+
+/// nav_msgs/Odometry of the circling robot (odom → base_link) with a 2-D covariance.
+fn encode_odometry(stamp: Stamp, current: Pose2D) -> Vec<u8> {
+    let mut w = Writer::with_capacity(700);
+    header(&mut w, stamp, "odom");
+    w.string("base_link");
+    pose(&mut w, current.x, current.y, current.yaw);
+    covariance(&mut w, [0.02, 0.02, 0.0, 0.0, 0.0, 0.01], 0.0);
+    let v = CIRCLE_RADIUS * std::f64::consts::TAU / CIRCLE_PERIOD_S;
+    for val in [
+        v,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        std::f64::consts::TAU / CIRCLE_PERIOD_S,
+    ] {
+        w.f64(val);
+    }
+    covariance(&mut w, [0.001; 6], 0.0);
+    w.finish()
+}
+
+/// geometry_msgs/PoseWithCovarianceStamped near the robot with a full 3-D covariance.
+fn encode_amcl_pose(stamp: Stamp, current: Pose2D, phase: u32) -> Vec<u8> {
+    let mut w = Writer::with_capacity(400);
+    header(&mut w, stamp, "map");
+    let wobble = (phase as f64 * 0.7).sin() * 0.05;
+    pose(
+        &mut w,
+        current.x + wobble,
+        current.y - wobble,
+        current.yaw + 0.05 * wobble,
+    );
+    covariance(&mut w, [0.05, 0.08, 0.01, 0.01, 0.02, 0.05], 0.02);
+    w.finish()
+}
+
+/// geometry_msgs/PointStamped orbiting the goal.
+fn encode_point_stamped(stamp: Stamp, current: Pose2D, phase: u32) -> Vec<u8> {
+    let mut w = Writer::with_capacity(64);
+    header(&mut w, stamp, "map");
+    let a = current.yaw - std::f64::consts::FRAC_PI_2 + std::f64::consts::PI;
+    let t = phase as f64 * 0.3;
+    w.f64(CIRCLE_RADIUS * a.cos() + 0.5 * t.cos())
+        .f64(CIRCLE_RADIUS * a.sin() + 0.5 * t.sin())
+        .f64(0.3 + 0.1 * (2.0 * t).sin());
+    w.finish()
+}
+
+/// geometry_msgs/PolygonStamped: the robot footprint (0.6 × 0.5 m, rounded) in base_link.
+fn encode_footprint(stamp: Stamp) -> Vec<u8> {
+    let mut w = Writer::with_capacity(160);
+    header(&mut w, stamp, "base_link");
+    let pts: [(f32, f32); 8] = [
+        (0.30, 0.20),
+        (0.25, 0.25),
+        (-0.25, 0.25),
+        (-0.30, 0.20),
+        (-0.30, -0.20),
+        (-0.25, -0.25),
+        (0.25, -0.25),
+        (0.30, -0.20),
+    ];
+    w.seq_len(pts.len());
+    for (x, y) in pts {
+        w.f32(x).f32(y).f32(0.0);
+    }
+    w.finish()
+}
+
+/// nav_msgs/GridCells: a pulsing ring of 0.1 m cells around the room centre.
+fn encode_grid_cells(stamp: Stamp, phase: u32) -> Vec<u8> {
+    let mut w = Writer::with_capacity(8000);
+    header(&mut w, stamp, "map");
+    w.f32(0.1).f32(0.1);
+    let r0 = 1.0 + 0.3 * (phase as f64 * 0.5).sin();
+    let mut cells: Vec<(f32, f32)> = Vec::new();
+    for i in -20..20 {
+        for j in -20..20 {
+            let x = i as f64 * 0.1 + 0.05;
+            let y = j as f64 * 0.1 + 0.05;
+            let d = (x * x + y * y).sqrt();
+            if d >= r0 && d < r0 + 0.25 {
+                cells.push((x as f32, y as f32));
+            }
+        }
+    }
+    w.seq_len(cells.len());
+    for (x, y) in cells {
+        w.f32(x).f32(y).f32(0.0);
+    }
+    w.finish()
+}
+
+/// sensor_msgs/Range from the laser frame straight ahead (ultrasound, 0.5 rad cone).
+fn encode_range(stamp: Stamp, current: Pose2D) -> Vec<u8> {
+    let mut w = Writer::with_capacity(64);
+    header(&mut w, stamp, "laser");
+    let lx = current.x + 0.2 * current.yaw.cos();
+    let ly = current.y + 0.2 * current.yaw.sin();
+    let r = ray_to_walls(lx, ly, current.yaw).min(4.0);
+    w.u8(0).f32(0.5).f32(0.05).f32(4.0).f32(r as f32);
     w.finish()
 }
 
@@ -1079,6 +1243,41 @@ mod tests {
         // Point 0 is a no-return, so the first surviving points are beams 1 and 2.
         assert_eq!(&p.channel("line").unwrap()[..2], &[1.0, 2.0]);
         assert_eq!(p.channel("intensity").unwrap().len(), p.len());
+    }
+
+    #[test]
+    fn tier1_messages_decode() {
+        use webrvizlite_core::msgs::{geometry, nav, sensor};
+        let pose = Pose2D {
+            x: 1.0,
+            y: 2.0,
+            yaw: 0.5,
+        };
+        let o = nav::decode_odometry(&encode_odometry(now_stamp(), pose)).unwrap();
+        assert_eq!(o.child_frame_id, "base_link");
+        assert_eq!(o.pose_covariance[0], 0.02);
+        let p =
+            geometry::decode_pose_with_covariance_stamped(&encode_amcl_pose(now_stamp(), pose, 3))
+                .unwrap();
+        assert_eq!(p.covariance[1], 0.02);
+        assert_eq!(
+            geometry::decode_point_stamped(&encode_point_stamped(now_stamp(), pose, 1))
+                .unwrap()
+                .header
+                .frame_id,
+            "map"
+        );
+        assert_eq!(
+            geometry::decode_polygon_stamped(&encode_footprint(now_stamp()))
+                .unwrap()
+                .points
+                .len(),
+            24
+        );
+        let g = nav::decode_grid_cells(&encode_grid_cells(now_stamp(), 0)).unwrap();
+        assert!(g.cells.len() > 30 && g.cell_width == 0.1);
+        let r = sensor::decode_range(&encode_range(now_stamp(), pose)).unwrap();
+        assert!(r.range > 0.0 && r.range <= 4.0);
     }
 
     #[test]
