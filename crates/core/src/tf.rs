@@ -197,12 +197,12 @@ impl TfBuffer {
     pub fn lookup(&self, target: &str, source: &str, time: TimeNs) -> Result<Transform, TfError> {
         let target = strip_slash(target);
         let source = strip_slash(source);
+        // Same frame is always identity, even when nothing has published that
+        // frame yet (tf2 `BufferCore::lookupTransform` does the same). This is
+        // what lets a sensor cloud render with the Fixed Frame set to its own
+        // frame_id when the robot publishes no TF for it.
         if target == source {
-            return if self.index.contains_key(target) {
-                Ok(Transform::IDENTITY)
-            } else {
-                Err(TfError::UnknownFrame)
-            };
+            return Ok(Transform::IDENTITY);
         }
         let ti = *self.index.get(target).ok_or(TfError::UnknownFrame)?;
         let si = *self.index.get(source).ok_or(TfError::UnknownFrame)?;
@@ -280,6 +280,31 @@ mod tests {
 
     fn close(a: [f64; 3], b: [f64; 3]) -> bool {
         a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() < 1e-9)
+    }
+
+    #[test]
+    fn same_frame_is_identity_even_when_unknown() {
+        // A sensor frame that no TF publisher mentions (e.g. a Livox cloud in
+        // `robot01/laser` with the Fixed Frame set to the same name) must still
+        // transform, exactly as tf2 does.
+        let b = TfBuffer::default();
+        assert_eq!(
+            b.lookup("robot01/laser", "robot01/laser", 0),
+            Ok(Transform::IDENTITY)
+        );
+        assert_eq!(
+            b.lookup("/robot01/laser", "robot01/laser", 123),
+            Ok(Transform::IDENTITY)
+        );
+        assert_eq!(
+            b.lookup_with_fallback("robot01/laser", "robot01/laser", 0),
+            Ok((Transform::IDENTITY, false))
+        );
+        // Distinct unknown frames still fail.
+        assert_eq!(
+            b.lookup("robot01/laser", "robot01/base_link", 0),
+            Err(TfError::UnknownFrame)
+        );
     }
 
     #[test]
