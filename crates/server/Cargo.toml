@@ -1,0 +1,31 @@
+[package]
+name = "webrvizlite-server"
+version.workspace = true
+edition.workspace = true
+description = "WebRvizLite server: WebSocket bridge + static frontend in one executable"
+
+[[bin]]
+name = "webrvizlite"
+path = "src/main.rs"
+
+[features]
+default = []
+# Real ROS 2 support via r2r (build inside a sourced ROS 2 environment).
+r2r = ["webrvizlite-bridge/r2r"]
+
+[dependencies]
+webrvizlite-core = { path = "../core" }
+webrvizlite-bridge = { path = "../bridge" }
+axum = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { version = "0.1", features = ["sync"] }
+bytes = { workspace = true }
+futures-util = "0.3"
+tower-http = { workspace = true }
+clap = { workspace = true }
+rust-embed = { workspace = true }
+mime_guess = { workspace = true }
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

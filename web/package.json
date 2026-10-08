@@ -1,0 +1,28 @@
+{
+  "name": "webrvizlite-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dockview": "^8.4.1",
+    "solid-js": "^1.9.16",
+    "three": "^0.186.1",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/three": "^0.186.0",
+    "jsdom": "^28.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.3",
+    "vite-plugin-solid": "^2.11.14",
+    "vitest": "^4.1.11"
+  }
+}

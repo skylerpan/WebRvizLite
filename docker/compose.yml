@@ -1,0 +1,34 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+    image: webrvizlite-dev
+    # Host networking so DDS discovery sees the robot's ROS graph and the server
+    # port (8765) is reachable without mapping.
+    network_mode: host
+    ipc: host
+    working_dir: /ws
+    environment:
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
+      # r2r generates typesupport bindings at build time for these packages only.
+      # No automatic dependency resolution: nested packages must be listed too.
+      IDL_PACKAGE_FILTER: "builtin_interfaces;std_msgs;geometry_msgs;sensor_msgs;nav_msgs;tf2_msgs;visualization_msgs;map_msgs;rosgraph_msgs;shape_msgs;std_srvs"
+    volumes:
+      - ..:/ws
+      - cargo-registry:/home/dev/.cargo/registry
+      - cargo-git:/home/dev/.cargo/git
+      - cargo-target:/ws/target
+      - npm-cache:/home/dev/.npm
+    stdin_open: true
+    tty: true
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  cargo-target:
+  npm-cache:

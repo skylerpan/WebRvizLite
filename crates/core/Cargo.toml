@@ -1,0 +1,15 @@
+[package]
+name = "webrvizlite-core"
+version.workspace = true
+edition.workspace = true
+description = "Shared, no_std-friendly core: wire protocol, CDR decoding, tf2 buffer, point cloud transforms"
+
+[features]
+default = ["std"]
+std = ["serde/std", "thiserror/std", "dep:serde_json"]
+
+[dependencies]
+serde = { workspace = true, features = ["alloc"] }
+libm = "0.2"
+serde_json = { workspace = true, optional = true }
+thiserror = { workspace = true }

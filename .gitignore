@@ -1,0 +1,20 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node / Vite
+/web/node_modules/
+/web/dist/
+/web/.vite/
+
+# wasm-pack output
+/web/src/wasm/pkg/
+
+# Docker local overrides
+/docker/compose.override.yml
+
+# Editors / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,23 @@
+[package]
+name = "webrvizlite-bridge"
+version.workspace = true
+edition.workspace = true
+description = "ROS 2 transport abstraction (trait), r2r implementation, and a ROS-free mock"
+
+[features]
+default = []
+# Real ROS 2 transport. Requires a sourced ROS 2 environment at build time
+# (r2r generates typesupport bindings from AMENT_PREFIX_PATH / IDL_PACKAGE_FILTER).
+r2r = ["dep:r2r"]
+
+[dependencies]
+webrvizlite-core = { path = "../core" }
+bytes = { workspace = true }
+futures-core = { workspace = true }
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true, features = ["std"] }
+tokio = { workspace = true }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tracing = { workspace = true }
+r2r = { version = "0.9.7", optional = true }
