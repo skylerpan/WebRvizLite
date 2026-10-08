@@ -21,3 +21,6 @@
 
 # Python
 __pycache__/
+
+# rosbag2 recordings
+/bags/
