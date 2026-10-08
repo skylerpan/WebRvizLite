@@ -503,6 +503,27 @@ impl TfBuffer {
             &parse_color_options(options_json),
         ))
     }
+
+    /// livox_ros_driver2/CustomMsg → points with intensity (reflectivity), tag, line and
+    /// offset_time channels.
+    #[wasm_bindgen(js_name = decodeLivoxCustomMsg)]
+    pub fn decode_livox_custom_msg(
+        &self,
+        bytes: &[u8],
+        fixed_frame: &str,
+        options_json: &str,
+    ) -> Result<PointCloudData, JsError> {
+        let msg = msgs::pointcloud::decode_livox_custom_msg(bytes)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        let pts = pointcloud::points_from_livox(&msg);
+        Ok(cloud_data(
+            &self.inner,
+            fixed_frame,
+            &msg.header,
+            &pts,
+            &parse_color_options(options_json),
+        ))
+    }
 }
 
 // ---------------------------------------------------------------------------

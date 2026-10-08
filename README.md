@@ -27,7 +27,7 @@ make build            # wasm-pack → vite build → cargo build --release (mock
 ```
 
 Open <http://127.0.0.1:8765>. `--mock` serves a synthetic scene (`/scan` 10 Hz,
-`/tf` 30 Hz, `/tf_static`, `/clock`) and needs no ROS. Append `?debug` to open
+`/livox/lidar` 10 Hz, `/tf` 30 Hz, `/tf_static`, `/clock`) and needs no ROS. Append `?debug` to open
 the topic debug panel (graph, subscribe toggles, receive rates), `?webgl` to
 force the WebGL2 backend.
 
@@ -52,13 +52,18 @@ make docker-build     # builds webrvizlite-dev (ros:humble-ros-base + Rust + Nod
 make docker-shell     # interactive shell with ROS sourced, repo mounted at /ws
 make docker-build-ros # wasm + web + cargo --features r2r, inside the container
 make docker-run-ros   # ROS-enabled server on http://127.0.0.1:8766 (host network)
-make docker-mock-scan # rclpy publisher of the same synthetic scene, for testing
+make docker-mock-scene # rclpy publisher of the same synthetic scene, for testing
 ```
 
 The container uses host networking so DDS discovery works against the robot's
 graph. Set `ROS_DOMAIN_ID` in the environment if needed. r2r resolves message
 typesupport at build time: the packages listed in `IDL_PACKAGE_FILTER`
 (`docker/compose.yml`) are the only types the bridge can subscribe to.
+`livox_ros_driver2/msg/CustomMsg` (Livox native point clouds, `xfer_format: 1`)
+is covered by a message-only copy of the upstream package in `docker/livox_msgs`
+that the image builds into `/opt/livox_ws`; the display class is
+`webrvizlite/LivoxCustomMsg` (reflectivity → `intensity`, plus `tag`, `line`,
+`offset_time` channels).
 
 ## Protocol
 
@@ -102,7 +107,8 @@ download. Recent configs are kept in localStorage (file handles in IndexedDB).
 
 `fixtures/mock_scene.rviz` with `--mock` shows every Tier 0 display: a map
 with the three colour schemes, a path with pose arrows, goal pose, particle
-cloud, laser scan, a 300k-point PointCloud2 at 10 Hz, and a MarkerArray with
+cloud, laser scan, a 300k-point PointCloud2 at 10 Hz, a 24k-point Livox
+CustomMsg rosette scan, and a MarkerArray with
 every marker type plus 5,000 cubes. `?perf` adds frame-time counters to the
 status bar; `?debug` opens the topic panel.
 

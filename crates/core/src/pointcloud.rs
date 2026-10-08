@@ -1,10 +1,10 @@
 //! Point cloud pipeline (spec §6.5): extract points from PointCloud2 /
-//! LaserScan, transform them into the fixed frame, and colour them with one of
+//! LaserScan / Livox CustomMsg, transform them into the fixed frame, and colour them with one of
 //! the RViz colour transformers. Runs in the worker (WASM); the output is
 //! uploaded to the GPU unchanged.
 
 use crate::math::Transform;
-use crate::msgs::pointcloud::{FLOAT32, FLOAT64, LaserScan, PointCloud2, UINT32};
+use crate::msgs::pointcloud::{FLOAT32, FLOAT64, LaserScan, LivoxCustomMsg, PointCloud2, UINT32};
 #[cfg(not(feature = "std"))]
 use alloc::{string::String, vec::Vec};
 
@@ -218,6 +218,40 @@ pub fn points_from_laser_scan(s: &LaserScan) -> Points {
     if has_intensity {
         out.channels.push((String::from("intensity"), intensity));
     }
+    out
+}
+
+/// Livox CustomMsg → points. Livox writes (0, 0, 0) for beams without a return;
+/// those and non-finite points are dropped. `reflectivity` is exposed as the
+/// `intensity` channel so the Intensity transformer's default Channel Name
+/// works unchanged; `tag`, `line` and `offset_time` are selectable channels.
+pub fn points_from_livox(m: &LivoxCustomMsg) -> Points {
+    let n = m.xyz.len() / 3;
+    let mut out = Points {
+        xyz: Vec::with_capacity(n * 3),
+        ..Default::default()
+    };
+    let mut intensity = Vec::with_capacity(n);
+    let mut tag = Vec::with_capacity(n);
+    let mut line = Vec::with_capacity(n);
+    let mut offset = Vec::with_capacity(n);
+    for i in 0..n {
+        let p = &m.xyz[i * 3..i * 3 + 3];
+        if !(p[0].is_finite() && p[1].is_finite() && p[2].is_finite())
+            || (p[0] == 0.0 && p[1] == 0.0 && p[2] == 0.0)
+        {
+            continue;
+        }
+        out.xyz.extend_from_slice(p);
+        intensity.push(m.reflectivity[i]);
+        tag.push(m.tag[i]);
+        line.push(m.line[i]);
+        offset.push(m.offset_time[i]);
+    }
+    out.channels.push((String::from("intensity"), intensity));
+    out.channels.push((String::from("tag"), tag));
+    out.channels.push((String::from("line"), line));
+    out.channels.push((String::from("offset_time"), offset));
     out
 }
 
@@ -497,5 +531,33 @@ mod tests {
         assert!((p.xyz[0] - 1.0).abs() < 1e-6);
         assert!((p.xyz[4] - 2.0).abs() < 1e-6); // second point along +Y
         assert_eq!(p.channel("intensity").unwrap(), &[10.0, 20.0]);
+    }
+
+    #[test]
+    fn livox_projection_drops_no_return_points() {
+        let m = LivoxCustomMsg {
+            header: Header::default(),
+            timebase: 0,
+            point_num: 3,
+            lidar_id: 0,
+            xyz: vec![1.0, 0.0, 0.5, 0.0, 0.0, 0.0, f32::NAN, 1.0, 1.0],
+            offset_time: vec![0.0, 10.0, 20.0],
+            reflectivity: vec![120.0, 0.0, 50.0],
+            tag: vec![16.0, 0.0, 0.0],
+            line: vec![3.0, 1.0, 2.0],
+        };
+        let p = points_from_livox(&m);
+        assert_eq!(p.len(), 1);
+        assert_eq!(p.xyz, vec![1.0, 0.0, 0.5]);
+        assert_eq!(p.channel("intensity").unwrap(), &[120.0]);
+        assert_eq!(p.channel("line").unwrap(), &[3.0]);
+        assert_eq!(
+            p.available_transformers(),
+            vec![
+                Transformer::FlatColor,
+                Transformer::AxisColor,
+                Transformer::Intensity
+            ]
+        );
     }
 }

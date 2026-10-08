@@ -125,6 +125,7 @@ const optionsJson = (sub: Subscription) => JSON.stringify(sub.options.color ?? {
 
 registerDecoder('point_cloud2', (sub, payload, tf, fixedFrame) => cloudResult(tf.decodePointCloud2(payload, fixedFrame, optionsJson(sub)), fixedFrame));
 registerDecoder('laser_scan', (sub, payload, tf, fixedFrame) => cloudResult(tf.decodeLaserScan(payload, fixedFrame, optionsJson(sub)), fixedFrame));
+registerDecoder('livox_custom_msg', (sub, payload, tf, fixedFrame) => cloudResult(tf.decodeLivoxCustomMsg(payload, fixedFrame, optionsJson(sub)), fixedFrame));
 
 // ---------------------------------------------------------------------------
 // Markers (M6)

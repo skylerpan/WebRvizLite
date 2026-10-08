@@ -4,12 +4,13 @@
 //! | topic        | type                        | rate  |
 //! |--------------|-----------------------------|-------|
 //! | `/scan`      | sensor_msgs/msg/LaserScan   | 10 Hz |
+//! | `/livox/lidar` | livox_ros_driver2/msg/CustomMsg | 10 Hz |
 //! | `/tf`        | tf2_msgs/msg/TFMessage      | 30 Hz |
 //! | `/tf_static` | tf2_msgs/msg/TFMessage      | latched (transient local) |
 //! | `/clock`     | rosgraph_msgs/msg/Clock     | 50 Hz |
 //!
 //! The robot drives a circle of radius 2 m inside an 8 m × 6 m room; the scan is
-//! a ray cast against the walls. `tools/mock_scan.py` publishes the same scene
+//! a ray cast against the walls. `tools/mock_scene.py` publishes the same scene
 //! with rclpy for testing the real r2r path inside the ROS container.
 
 use std::collections::HashMap;
@@ -48,6 +49,13 @@ pub const MARKER_TYPE: &str = "visualization_msgs/msg/Marker";
 /// Spec §8.1 M6: 5,000 CUBE markers must stay at 60 FPS.
 pub const CUBE_MARKERS: usize = 5_000;
 pub const PARTICLE_TOPIC: &str = "/particlecloud";
+pub const LIVOX_TOPIC: &str = "/livox/lidar";
+pub const LIVOX_TYPE: &str = "livox_ros_driver2/msg/CustomMsg";
+/// Points per Livox frame (a Mid-360 publishes ~20k points per 100 ms).
+pub const LIVOX_POINTS: usize = 24_000;
+/// `livox_frame` sits this high above `base_link`.
+const LIVOX_HEIGHT: f64 = 0.5;
+const ROOM_CEILING: f64 = 2.5;
 pub const POSE_ARRAY_TYPE: &str = "geometry_msgs/msg/PoseArray";
 const MAP_RESOLUTION: f64 = 0.05;
 
@@ -83,6 +91,7 @@ impl MockTransport {
         };
         let mut channels = HashMap::new();
         channels.insert(SCAN_TOPIC, mk(SCAN_TYPE, 4));
+        channels.insert(LIVOX_TOPIC, mk(LIVOX_TYPE, 2));
         channels.insert(TF_TOPIC, mk(TF_TYPE, 8));
         channels.insert(TF_STATIC_TOPIC, mk(TF_TYPE, 1));
         channels.insert(CLOCK_TOPIC, mk(CLOCK_TYPE, 8));
@@ -150,10 +159,16 @@ impl MockTransport {
         let t = this.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_millis(100));
+            let mut phase = 0u32;
             loop {
                 tick.tick().await;
+                phase = phase.wrapping_add(1);
                 let (stamp, pose) = t.pose_now();
                 t.channel(SCAN_TOPIC).send(encode_scan(stamp, pose));
+                if t.channel(LIVOX_TOPIC).tx.receiver_count() > 0 {
+                    t.channel(LIVOX_TOPIC)
+                        .send(encode_livox(stamp, pose, phase));
+                }
             }
         });
         let t = this.clone();
@@ -397,7 +412,7 @@ fn encode_tf(stamp: Stamp, pose: Pose2D) -> Vec<u8> {
 
 fn encode_tf_static(stamp: Stamp) -> Vec<u8> {
     let mut w = Writer::new();
-    w.seq_len(1);
+    w.seq_len(2);
     transform(
         &mut w,
         stamp,
@@ -406,6 +421,72 @@ fn encode_tf_static(stamp: Stamp) -> Vec<u8> {
         [0.2, 0.0, 0.3],
         [0.0, 0.0, 0.0, 1.0],
     );
+    transform(
+        &mut w,
+        stamp,
+        "base_link",
+        "livox_frame",
+        [0.0, 0.0, LIVOX_HEIGHT],
+        [0.0, 0.0, 0.0, 1.0],
+    );
+    w.finish()
+}
+
+/// livox_ros_driver2/CustomMsg in `livox_frame`: a non-repetitive rosette scan of
+/// the room (walls, floor, ceiling) with reflectivity per surface, four laser
+/// lines, Livox tags, and every 97th beam a (0, 0, 0) no-return point.
+fn encode_livox(stamp: Stamp, pose: Pose2D, phase: u32) -> Vec<u8> {
+    const STRIDE: usize = 20;
+    let n = LIVOX_POINTS;
+    let mut w = Writer::with_capacity(n * STRIDE + 64);
+    header(&mut w, stamp, "livox_frame");
+    let timebase = stamp.sec as u64 * 1_000_000_000 + stamp.nanosec as u64;
+    w.u64(timebase).u32(n as u32).u8(0);
+    w.bytes(&[0, 0, 0]);
+    w.seq_len(n);
+    let t = phase as f64 * 0.1;
+    let golden = std::f64::consts::PI * (3.0 - 5f64.sqrt());
+    for i in 0..n {
+        let f = i as f64;
+        let az = (f * golden + t * 0.7) % std::f64::consts::TAU;
+        // Elevation sweeps -40°..+40° in a slow sinusoid, like a Mid-360 rosette.
+        let el = 0.7 * (f * 0.0137 + t).sin();
+        let (sin_el, cos_el) = el.sin_cos();
+        let d_wall = ray_to_walls(pose.x, pose.y, pose.yaw + az);
+        // Horizontal distance to floor / ceiling along this beam.
+        let d_vert = if el < -1e-3 {
+            LIVOX_HEIGHT / (-el).tan()
+        } else if el > 1e-3 {
+            (ROOM_CEILING - LIVOX_HEIGHT) / el.tan()
+        } else {
+            f64::INFINITY
+        };
+        let (d, reflectivity) = if d_vert < d_wall {
+            (d_vert, if el < 0.0 { 60u8 } else { 90 })
+        } else {
+            (d_wall, 150)
+        };
+        let range = d / cos_el; // slant range
+        let no_return = i % 97 == 0;
+        let (x, y, z) = if no_return {
+            (0.0, 0.0, 0.0)
+        } else {
+            (
+                range * cos_el * az.cos(),
+                range * cos_el * az.sin(),
+                range * sin_el,
+            )
+        };
+        let offset_ns = (f * 100_000_000.0 / n as f64) as u32;
+        w.u32(offset_ns);
+        w.f32(x as f32).f32(y as f32).f32(z as f32);
+        let noise = ((i * 7919) % 23) as u8;
+        w.bytes(&[
+            if no_return { 0 } else { reflectivity + noise },
+            if i % 13 == 0 { 16 } else { 0 }, // tag: occasional "noise" flag
+            (i % 4) as u8,                    // line 0..3
+        ]);
+    }
     w.finish()
 }
 
@@ -969,6 +1050,35 @@ mod tests {
         r.f32_seq_into(&mut intensities).unwrap();
         assert_eq!(intensities.len(), BEAMS);
         assert_eq!(r.remaining(), 0);
+    }
+
+    #[test]
+    fn livox_decodes_and_drops_no_returns() {
+        let bytes = encode_livox(
+            Stamp { sec: 1, nanosec: 2 },
+            Pose2D {
+                x: 0.0,
+                y: 0.0,
+                yaw: 0.0,
+            },
+            3,
+        );
+        assert_eq!(bytes.len(), 4 + 44 + LIVOX_POINTS * 20 - 1);
+        let m = webrvizlite_core::msgs::pointcloud::decode_livox_custom_msg(&bytes).unwrap();
+        assert_eq!(m.header.frame_id, "livox_frame");
+        assert_eq!(m.point_num as usize, LIVOX_POINTS);
+        assert_eq!(m.xyz.len(), LIVOX_POINTS * 3);
+        let p = webrvizlite_core::pointcloud::points_from_livox(&m);
+        let no_returns = LIVOX_POINTS.div_ceil(97);
+        assert_eq!(p.len(), LIVOX_POINTS - no_returns);
+        // Everything lies inside the room box around the sensor.
+        for xyz in p.xyz.chunks(3) {
+            assert!(xyz[0].abs() <= 8.1 && xyz[1].abs() <= 6.1, "{xyz:?}");
+            assert!(xyz[2] >= -0.51 && xyz[2] <= 2.01, "{xyz:?}");
+        }
+        // Point 0 is a no-return, so the first surviving points are beams 1 and 2.
+        assert_eq!(&p.channel("line").unwrap()[..2], &[1.0, 2.0]);
+        assert_eq!(p.channel("intensity").unwrap().len(), p.len());
     }
 
     #[test]
