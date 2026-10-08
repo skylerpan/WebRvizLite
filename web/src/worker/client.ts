@@ -27,6 +27,8 @@ export class BridgeClient {
   readonly lastError;
   /** Latest server clock: ROS time and server wall time, both ns since epoch. */
   readonly clock;
+  /** WebTransport session state (best-effort topics) for the status bar. */
+  readonly transport;
 
   private readonly setWsState;
   private readonly setHello;
@@ -35,6 +37,7 @@ export class BridgeClient {
   private readonly setStats;
   private readonly setLastError;
   private readonly setClock;
+  private readonly setTransport;
 
   constructor() {
     [this.wsState, this.setWsState] = createSignal<WsState>('connecting');
@@ -44,6 +47,7 @@ export class BridgeClient {
     [this.stats, this.setStats] = createSignal<SubscriptionStats[]>([]);
     [this.lastError, this.setLastError] = createSignal<string | null>(null);
     [this.clock, this.setClock] = createSignal<{ rosTimeNs: bigint; wallTimeNs: bigint } | null>(null);
+    [this.transport, this.setTransport] = createSignal<{ wt: 'off' | 'connecting' | 'on' | 'failed'; detail?: string }>({ wt: 'off' });
 
     this.worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (ev: MessageEvent<WorkerToMain>) => this.onMessage(ev.data);
@@ -78,6 +82,10 @@ export class BridgeClient {
         break;
       case 'tf':
         measure('tf snapshot', () => this.tf.apply(msg));
+        break;
+      case 'transport':
+        this.setTransport({ wt: msg.wt, detail: msg.detail });
+        if (msg.detail) console.info('[bridge] transport:', msg.detail);
         break;
       case 'point_info': {
         const resolve = this.pointRequests.get(msg.requestId);

@@ -32,7 +32,7 @@ pub struct Frame {
 /// Pending-frame slot for one client subscription.
 pub struct Slot {
     pub id: SubscriptionId,
-    latest_only: bool,
+    pub latest_only: bool,
     capacity: usize,
     queue: Mutex<VecDeque<Frame>>,
     wake: Arc<Notify>,

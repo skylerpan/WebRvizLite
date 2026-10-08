@@ -9,9 +9,11 @@ name = "webrvizlite"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["webtransport"]
 # Real ROS 2 support via r2r (build inside a sourced ROS 2 environment).
 r2r = ["webrvizlite-bridge/r2r"]
+# WebTransport (HTTP/3 over QUIC) for best-effort topics (spec §2); self-signed cert at startup.
+webtransport = ["dep:wtransport", "dep:rand"]
 
 [dependencies]
 webrvizlite-core = { path = "../core" }
@@ -29,3 +31,5 @@ serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true, features = ["std"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+wtransport = { version = "0.7", features = ["self-signed"], optional = true }
+rand = { version = "0.9", optional = true }

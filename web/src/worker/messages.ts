@@ -30,6 +30,8 @@ export interface Hello {
   use_sim_time: boolean;
   display_config: string | null;
   fixed_frame: string | null;
+  /** WebTransport endpoint offered by the server (absent when disabled). */
+  wt?: { port: number; cert_sha256_hex: string; token: string };
 }
 
 export type WsState = 'connecting' | 'connected' | 'disconnected';
@@ -71,6 +73,8 @@ export interface SubscriptionStats {
   lastBytes: number;
   lastReceiveMs: number;
   error: string | null;
+  /** Transport the last frame arrived on. */
+  via: 'ws' | 'wt' | null;
 }
 
 /**
@@ -126,5 +130,7 @@ export type WorkerToMain =
   | { type: 'error'; id: number | null; message: string }
   | { type: 'stats'; subscriptions: SubscriptionStats[] }
   | { type: 'point_info'; requestId: number; info: { names: string[]; values: number[] } | null }
+  /** WebTransport session state for the status bar. */
+  | { type: 'transport'; wt: 'off' | 'connecting' | 'on' | 'failed'; detail?: string }
   | TfSnapshotMessage
   | DataMessage;

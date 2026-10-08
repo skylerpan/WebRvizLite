@@ -65,7 +65,7 @@ export function DebugPanel(_props: PanelProps) {
       </div>
       <table class="wrl-debug-table">
         <thead>
-          <tr><th></th><th>Topic</th><th>Type</th><th>Hz</th><th>Rate</th><th>Last</th><th>Msgs</th><th>Status</th></tr>
+          <tr><th></th><th>Topic</th><th>Type</th><th>Hz</th><th>Rate</th><th>Last</th><th>Msgs</th><th>Via</th><th>Status</th></tr>
         </thead>
         <tbody>
           <For each={bridge.topics()}>
@@ -82,6 +82,7 @@ export function DebugPanel(_props: PanelProps) {
                   <td class="wrl-num">{st() ? `${fmtBytes(st()!.bps)}/s` : ''}</td>
                   <td class="wrl-num">{st() ? fmtBytes(st()!.lastBytes) : ''}</td>
                   <td class="wrl-num">{st() ? st()!.messages : ''}</td>
+                  <td>{st()?.via ?? ''}</td>
                   <td>{st()?.error ? <span class="wrl-status-err">{st()!.error}</span> : st() ? <span class="wrl-status-ok">ok</span> : ''}</td>
                 </tr>
               );

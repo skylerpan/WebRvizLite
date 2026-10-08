@@ -159,6 +159,9 @@ export function App() {
         }}>
           Server: {bridge.wsState()}{serverLabel()}
         </span>
+        <span title={bridge.transport().detail ?? 'Transport of best-effort topics'} classList={{ 'wrl-status-ok': bridge.transport().wt === 'on', 'wrl-status-warn': bridge.transport().wt === 'connecting' }}>
+          {bridge.transport().wt === 'on' ? 'WS+WT' : bridge.transport().wt === 'connecting' ? 'WS (WT…)' : 'WS'}
+        </span>
         <Show when={bridge.clock()}>{(c) => <span>ROS time: {(Number(c().rosTimeNs / 1_000_000n) / 1000).toFixed(1)}</span>}</Show>
       </div>
       <Show when={app.dialog() === 'addDisplay'}>

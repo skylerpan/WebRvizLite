@@ -47,6 +47,10 @@ pub struct Args {
     #[arg(long = "package-path", value_name = "NAME=DIR")]
     pub package_paths: Vec<String>,
 
+    /// Do not open the WebTransport (QUIC/UDP) endpoint; everything goes over the WebSocket.
+    #[arg(long)]
+    pub no_webtransport: bool,
+
     /// Use the built-in mock transport (synthetic /scan, /tf, /tf_static, /clock)
     /// instead of ROS 2. Works without a ROS installation.
     #[arg(long)]

@@ -132,6 +132,9 @@ pub enum ClientMessage {
     Unsubscribe { id: SubscriptionId },
     /// Request the current topic graph; answered with [`ServerMessage::Topics`].
     ListTopics,
+    /// The browser reports whether its WebTransport session is usable; while
+    /// true, best-effort frames go over WebTransport instead of the WebSocket.
+    Transport { wt: bool },
     /// Publish one message given as JSON in the ROS 2 field layout
     /// (what `ros2 topic pub` accepts). Used by the SetInitialPose / SetGoal /
     /// PublishPoint tools and InteractiveMarker feedback.
@@ -152,6 +155,19 @@ pub enum ClientMessage {
 // Server → Client
 // ---------------------------------------------------------------------------
 
+/// WebTransport endpoint offered in [`ServerMessage::Hello`] (spec §2 Tier 1).
+/// The browser connects with `serverCertificateHashes` (self-signed ECDSA
+/// certificate, ≤ 14 days) and presents `token` in the session URL path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WtHello {
+    /// UDP port of the QUIC endpoint (same number as the HTTP port).
+    pub port: u16,
+    /// SHA-256 of the DER certificate, lowercase hex without separators.
+    pub cert_sha256_hex: String,
+    /// Per-session token: `https://host:port/wt?token=<token>`.
+    pub token: String,
+}
+
 /// Sent by the server as text frames. Binary frames ([`crate::wire`]) are the
 /// only other thing the server sends.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +187,9 @@ pub enum ServerMessage {
         display_config: Option<String>,
         /// Fixed Frame override from `-f`, if any.
         fixed_frame: Option<String>,
+        /// WebTransport endpoint, when the server has one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wt: Option<WtHello>,
     },
     /// Reply to [`ClientMessage::ListTopics`]. May also be pushed unsolicited
     /// when the graph changes.
@@ -235,6 +254,11 @@ mod tests {
                 use_sim_time: false,
                 display_config: None,
                 fixed_frame: None,
+                wt: Some(WtHello {
+                    port: 8765,
+                    cert_sha256_hex: "ab".repeat(32),
+                    token: "deadbeef".into(),
+                }),
             },
             ServerMessage::Topics {
                 topics: vec![TopicInfo {
@@ -256,6 +280,17 @@ mod tests {
             assert!(json.starts_with(r#"{"op":""#), "{json}");
             assert_eq!(serde_json::from_str::<ServerMessage>(&json).unwrap(), m);
         }
+    }
+
+    #[test]
+    fn hello_without_wt_and_transport_message() {
+        let json = r#"{"op":"hello","version":"0.1.0","ros_distro":null,"mock":true,"use_sim_time":false,"display_config":null,"fixed_frame":null}"#;
+        match serde_json::from_str::<ServerMessage>(json).unwrap() {
+            ServerMessage::Hello { wt, .. } => assert!(wt.is_none()),
+            _ => panic!(),
+        }
+        let m: ClientMessage = serde_json::from_str(r#"{"op":"transport","wt":true}"#).unwrap();
+        assert_eq!(m, ClientMessage::Transport { wt: true });
     }
 
     #[test]
