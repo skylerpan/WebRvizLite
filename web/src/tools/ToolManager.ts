@@ -6,6 +6,7 @@
 import { createSignal, type Accessor } from 'solid-js';
 import { MOVE_CAMERA_INFO, MoveCameraTool } from './moveCamera';
 import { UnknownTool, isTool } from './Tool';
+import { GroupProperty } from '../property/Property';
 import type { Tool, ToolClassInfo, ToolContext } from './types';
 import type { YamlValue } from '../property/types';
 import type { ViewportPointerEvent } from '../views/types';
@@ -23,16 +24,29 @@ export class ToolManager {
   private readonly classes = new Map<string, { info: ToolClassInfo; create: () => Tool }>();
   readonly tools: Accessor<readonly Tool[]>;
   private readonly setTools: (t: readonly Tool[]) => void;
+  /** Root of the Tool Properties panel: one child per tool that has properties (rviz ToolPropertiesPanel). */
+  readonly propertiesRoot = new GroupProperty('Tool Properties', null);
   readonly current: Accessor<Tool | null>;
   private readonly setCurrentSignal: (t: Tool | null) => void;
   private readonly ctx: ToolContext;
 
   constructor(ctx: Omit<ToolContext, 'revertToDefault'>) {
     this.ctx = { ...ctx, revertToDefault: () => this.revertToDefault() };
-    [this.tools, this.setTools] = createSignal<readonly Tool[]>([]);
+    const [tools, setTools] = createSignal<readonly Tool[]>([]);
+    this.tools = tools;
+    this.setTools = (t) => {
+      setTools(t);
+      this.syncPropertiesRoot();
+    };
     [this.current, this.setCurrentSignal] = createSignal<Tool | null>(null);
     this.register(MOVE_CAMERA_INFO, () => new MoveCameraTool());
     this.load(null);
+  }
+
+  private syncPropertiesRoot() {
+    const wanted = this.tools().filter((t) => t.available && t.properties.children().length > 0).map((t) => t.properties);
+    for (const c of this.propertiesRoot.children().slice()) if (!wanted.includes(c as GroupProperty)) this.propertiesRoot.removeChild(c);
+    for (const p of wanted) this.propertiesRoot.addChild(p);
   }
 
   register(info: ToolClassInfo, create: () => Tool) {

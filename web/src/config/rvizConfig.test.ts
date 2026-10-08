@@ -85,6 +85,29 @@ describe('.rviz round trip', () => {
     expect(classes).toContain('rviz_default_plugins/Grid');
   });
 
+  it('Tier 1 panel keys: Time / Tool Properties / Selection / Window Geometry / layout round-trip', () => {
+    const text = readFileSync(join(FIXTURES, 'default.rviz'), 'utf8');
+    const cfg = RvizConfig.parse(text);
+    expect(cfg.timePanelState()).toEqual({ experimental: false, syncMode: 0, syncSource: '' });
+    expect(cfg.treePanelState('rviz_common/Tool Properties', []).expanded).toEqual(['/2D Goal Pose1', '/Publish Point1']);
+
+    const known = ['rviz_common/Displays', 'rviz_common/Views', 'rviz_common/Tool Properties', 'rviz_common/Selection', 'rviz_common/Time'];
+    cfg.prunePanels(known, ['rviz_common/Displays', 'rviz_common/Time', 'rviz_common/Selection']);
+    expect(cfg.panels().map((p) => p.Class)).toEqual(['rviz_common/Displays', 'rviz_common/Selection', 'rviz_common/Time']);
+    cfg.setTimePanelState({ experimental: true, syncMode: 2, syncSource: '/scan' });
+    cfg.setPanelPresent('rviz_common/Selection', 'Selection');
+    cfg.setWindowGeometry(['Displays', 'Selection', 'Time']);
+    cfg.setLayout({ grid: { root: { type: 'branch', data: [] }, width: 1, height: 1, orientation: 'HORIZONTAL' }, panels: {} });
+    const re = RvizConfig.parse(cfg.stringify());
+    expect(re.timePanelState()).toEqual({ experimental: true, syncMode: 2, syncSource: '/scan' });
+    expect(re.panels().filter((p) => p.Class === 'rviz_common/Selection')).toHaveLength(1);
+    const wg = re.windowGeometry;
+    expect(wg.Selection).toEqual({ collapsed: false });
+    expect(wg.Displays).toEqual({ collapsed: false });
+    expect(typeof wg['QMainWindow State']).toBe('string');
+    expect(isYamlMap(re.layout) && isYamlMap(re.layout.grid)).toBe(true);
+  });
+
   it('stringify keeps the QMainWindow State hex blob on one line', () => {
     const text = readFileSync(join(FIXTURES, 'default.rviz'), 'utf8');
     const out = RvizConfig.parse(text).stringify();

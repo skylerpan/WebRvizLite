@@ -103,7 +103,9 @@ export type MainToWorker =
   | { type: 'publish'; topic: string; msgType: string; qos: QosProfile; msg: unknown }
   | { type: 'stats'; enabled: boolean }
   | { type: 'set_fixed_frame'; frame: string }
-  | { type: 'tf_rate'; hz: number };
+  | { type: 'tf_rate'; hz: number }
+  /** Time the tf snapshot is taken at (ns); 0n = latest. Set while the Time panel is paused. */
+  | { type: 'tf_time'; timeNs: bigint };
 
 export type WorkerToMain =
   | { type: 'wasm'; version: string }

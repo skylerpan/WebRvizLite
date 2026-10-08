@@ -128,6 +128,11 @@ export class BridgeClient {
     this.send({ type: 'tf_rate', hz });
   }
 
+  /** Freezes tf snapshots at `timeNs` (0n = follow the latest transforms). */
+  setTfTime(timeNs: bigint) {
+    this.send({ type: 'tf_time', timeNs });
+  }
+
   terminate() {
     this.worker.terminate();
   }

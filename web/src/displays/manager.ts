@@ -15,6 +15,52 @@ import type { DisplayContext, DisplayRegistry } from './types';
 import { ViewManager } from '../views/ViewManager';
 import { ToolManager } from '../tools/ToolManager';
 
+/**
+ * ROS / wall clock state behind the Time panel (rviz FrameManager pause +
+ * TimePanel elapsed counters). Pausing freezes the ROS time every display and
+ * the tf snapshot see; messages keep arriving (as in rviz).
+ */
+export class TimeState {
+  readonly paused: Accessor<boolean>;
+  private readonly setPausedSignal: (b: boolean) => void;
+  readonly rosTimeNs: Accessor<bigint>;
+  readonly rosStartNs: Accessor<bigint>;
+  readonly wallStartNs: Accessor<bigint>;
+  private readonly setRosStart: (v: bigint) => void;
+  private readonly setWallStart: (v: bigint) => void;
+  private frozenNs = 0n;
+
+  constructor(private readonly bridge: BridgeClient) {
+    [this.paused, this.setPausedSignal] = createSignal(false);
+    [this.rosStartNs, this.setRosStart] = createSignal(0n);
+    [this.wallStartNs, this.setWallStart] = createSignal(0n);
+    const clockNs = () => bridge.clock()?.rosTimeNs ?? 0n;
+    this.rosTimeNs = () => (this.paused() ? this.frozenNs : clockNs());
+    // Elapsed counters start at the first clock message.
+    createEffect(() => {
+      const c = bridge.clock();
+      if (!c) return;
+      untrack(() => {
+        if (this.rosStartNs() === 0n) this.setRosStart(c.rosTimeNs);
+        if (this.wallStartNs() === 0n) this.setWallStart(c.wallTimeNs);
+      });
+    });
+  }
+
+  setPaused(paused: boolean) {
+    if (paused === this.paused()) return;
+    if (paused) this.frozenNs = this.bridge.clock()?.rosTimeNs ?? 0n;
+    this.setPausedSignal(paused);
+    this.bridge.setTfTime(paused ? this.frozenNs : 0n);
+  }
+
+  resetElapsed() {
+    const c = this.bridge.clock();
+    this.setRosStart(c?.rosTimeNs ?? 0n);
+    this.setWallStart(c?.wallTimeNs ?? 0n);
+  }
+}
+
 export class VisualizationManager {
   readonly registry: DisplayRegistry;
   readonly root: DisplayGroupImpl;
@@ -28,8 +74,9 @@ export class VisualizationManager {
   readonly context: DisplayContext;
   readonly views: ViewManager;
   readonly tools: ToolManager;
-  /** ROS time from the server clock, ns. */
+  /** ROS time from the server clock, ns (frozen while the Time panel is paused). */
   readonly rosTimeNs: Accessor<bigint>;
+  readonly time: TimeState;
   private lastRosNs = 0n;
 
   constructor(readonly scene: THREE.Scene, readonly bridge: BridgeClient) {
@@ -53,10 +100,8 @@ export class VisualizationManager {
     });
     this.globalStatus = new StatusListPropertyImpl('Global Status', this.root);
 
-    this.rosTimeNs = () => {
-      const c = bridge.clock();
-      return c ? c.rosTimeNs : 0n;
-    };
+    this.time = new TimeState(bridge);
+    this.rosTimeNs = this.time.rosTimeNs;
     this.context = { scene, bridge, fixedFrame, tf: bridge.tf, rosTimeNs: this.rosTimeNs };
 
     this.views = new ViewManager({ tf: bridge.tf, fixedFrame });

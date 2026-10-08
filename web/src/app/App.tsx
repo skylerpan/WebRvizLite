@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
-import { createLayout, type Layout } from './layout';
+import { PANEL_TITLES, createLayout } from './layout';
 import { getApp } from './store';
 import { MenuButton, type MenuItem } from './Menu';
 import { AddDisplayDialog } from '../panels/AddDisplayDialog';
@@ -8,18 +8,17 @@ import { SHORTCUTS, installShortcuts, type ShortcutScope } from './shortcuts';
 import { longFrames, measuredFps, renderBackend, resetPerfCounters, worstFrameMs } from '../render/Renderer';
 import { perfSummary, resetPerf } from '../render/perf';
 
-const PANEL_TITLES: Record<string, string> = { displays: 'Displays', views: 'Views', time: 'Time', debug: 'Topics (debug)' };
-
 export function App() {
   let dockEl!: HTMLDivElement;
   const app = getApp();
   const bridge = app.bridge;
-  const [layout, setLayout] = createSignal<Layout | null>(null);
+  const layout = app.layout;
   const [layoutVersion, setLayoutVersion] = createSignal(0);
 
   onMount(() => {
     const l = createLayout(dockEl, { debug: new URLSearchParams(location.search).has('debug') });
-    setLayout(l);
+    app.setLayout(l);
+    app.applyLayoutFromConfig();
     const sub = l.api.onDidLayoutChange(() => setLayoutVersion(layoutVersion() + 1));
     if (import.meta.env.DEV) {
       // Debug handle for the dev console / automated checks; stripped from production builds.
@@ -27,6 +26,7 @@ export function App() {
     }
     onCleanup(() => {
       sub.dispose();
+      app.setLayout(null);
       l.dispose();
     });
   });
@@ -101,6 +101,8 @@ export function App() {
       const open = !!l?.api.getPanel(id);
       items.push({ label: title, checked: open, onSelect: () => (open ? l?.api.getPanel(id)?.api.close() : l?.showPanel(id, title)) });
     }
+    items.push({ separator: true, label: '' });
+    items.push({ label: 'Reset Layout', onSelect: () => l?.buildDefault(app.config.panels().length ? app.config.panels() : null) });
     return items;
   };
 

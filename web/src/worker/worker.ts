@@ -46,6 +46,8 @@ let statsTimer: ReturnType<typeof setInterval> | null = null;
 let tfTimer: ReturnType<typeof setInterval> | null = null;
 let tfRateHz = 30;
 let fixedFrame = 'map';
+/** tf snapshot time (ns); 0n = latest (Time panel Pause sets a fixed time). */
+let tfTimeNs = 0n;
 let tfBuffer: TfBuffer | null = null;
 let lastFrameCount = -1;
 let lastNamesJson = '';
@@ -202,7 +204,7 @@ function postTfSnapshot() {
   if (!tfBuffer) return;
   const count = tfBuffer.frameCount();
   const poses = new Float64Array(Math.max(1, count * SNAPSHOT_STRIDE));
-  const n = tfBuffer.snapshot(fixedFrame, 0n, poses);
+  const n = tfBuffer.snapshot(fixedFrame, tfTimeNs, poses);
   const msg: WorkerToMain & { type: 'tf' } = { type: 'tf', poses, count: n, fixedFrame, nowNs: Number(wallNowNs()) };
   const namesJson = count === lastFrameCount ? lastNamesJson : tfBuffer.frameNamesJson();
   if (count !== lastFrameCount || namesJson !== lastNamesJson) {
@@ -250,6 +252,10 @@ onmessage = (ev: MessageEvent<MainToWorker>) => {
       break;
     case 'tf_rate':
       setTfRate(m.hz);
+      break;
+    case 'tf_time':
+      tfTimeNs = m.timeNs;
+      postTfSnapshot();
       break;
   }
 };

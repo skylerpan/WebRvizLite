@@ -176,3 +176,11 @@ select.wrl-edit { background: #1e1e1e; }
 .wrl-about td { padding: 1px 10px 1px 0; }
 .wrl-displays-buttons button:not(:disabled) { cursor: pointer; }
 .wrl-tree:focus { outline: 1px solid var(--wrl-accent); outline-offset: -1px; }
+
+/* Time panel (rviz TimePanel: one row of controls and read-only clocks) */
+.wrl-time { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 12px; }
+.wrl-time label { display: flex; gap: 4px; align-items: center; }
+.wrl-time button { font: inherit; background: #333; color: var(--wrl-fg); border: 1px solid var(--wrl-border); border-radius: 3px; padding: 1px 8px; cursor: pointer; }
+.wrl-time button.wrl-tool-active { background: #555; }
+.wrl-time-field { display: inline-flex; gap: 4px; align-items: center; }
+.wrl-time-field input { width: 90px; font: inherit; background: #222; color: var(--wrl-fg); border: 1px solid var(--wrl-border); border-radius: 3px; padding: 1px 4px; text-align: right; }
