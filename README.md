@@ -26,6 +26,11 @@ make build            # wasm-pack → vite build → cargo build --release (mock
 ./target/release/webrvizlite --mock --port 8765
 ```
 
+Build fails to load the workspace on a newer cargo? See
+[`docs/build-troubleshooting.md`](docs/build-troubleshooting.md).
+Server starts but the browser cannot connect, or the UI is stale? See
+[`docs/running.md`](docs/running.md).
+
 Open <http://127.0.0.1:8765>. `--mock` serves a synthetic scene (`/scan` 10 Hz,
 `/tf` 30 Hz, `/tf_static`, `/clock`) and needs no ROS. Append `?debug` to open
 the topic debug panel (graph, subscribe toggles, receive rates), `?webgl` to

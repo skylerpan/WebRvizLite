@@ -11,4 +11,4 @@ crate-type = ["cdylib", "rlib"]
 webrvizlite-core = { path = "../core", default-features = false }
 wasm-bindgen = { workspace = true }
 serde = { workspace = true, features = ["std"] }
-serde_json = { workspace = true, default-features = false, features = ["alloc"] }
+serde_json = { workspace = true, features = ["alloc"] }
