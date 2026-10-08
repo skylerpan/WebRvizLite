@@ -19,6 +19,8 @@ function missingPaths(expected: YamlValue, actual: YamlValue, path = ''): string
     if (!Array.isArray(actual) || actual.length !== expected.length) return [`${path}: list length ${expected.length} vs ${Array.isArray(actual) ? actual.length : 'non-list'}`];
     return expected.flatMap((v, i) => missingPaths(v, actual[i], `${path}[${i}]`));
   }
+  // A flat `Topic: /x` loads into the QoS map form `{Value: /x, Depth, ...}` (rviz lyrical writes the map).
+  if (isYamlMap(actual) && 'Value' in actual && actual.Value === expected) return [];
   return Object.is(expected, actual) || expected === actual ? [] : [`${path}: ${JSON.stringify(expected)} → ${JSON.stringify(actual)}`];
 }
 
