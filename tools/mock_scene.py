@@ -13,7 +13,7 @@ driving a 2 m circle, and every topic `fixtures/mock_scene.rviz` subscribes to:
 Sizes default smaller than the Rust mock because rclpy serialises in Python:
 --points 100000, --cubes 5000, --livox-points 4000.
 
-Run inside the ROS container:  make mock-ros
+Run inside the ROS container:  make docker-mock-ros
 """
 import argparse
 import array

@@ -27,7 +27,7 @@ make mock-rust        # rebuild, then run the server with its built-in Rust mock
 ```
 
 Two mocks exist: `make mock-rust` is the server's own Rust `MockTransport`
-(host, nothing on ROS, full-scale scene); `make mock-ros` is an rclpy node in
+(host, nothing on ROS, full-scale scene); `make docker-mock-ros` is an rclpy node in
 the container publishing the same scene on real ROS 2 topics for the r2r
 bridge (see below).
 
@@ -64,7 +64,7 @@ make docker-build     # builds webrvizlite-dev (ros:humble-ros-base + Rust + Nod
 make docker-shell     # interactive shell with ROS sourced, repo mounted at /ws
 make docker-build-ros # wasm + web + cargo --features r2r, inside the container
 make docker-run-ros   # ROS-enabled server on http://127.0.0.1:8766 (host network)
-make mock-ros         # rclpy publisher of the same scene on real ROS 2 topics, for testing
+make docker-mock-ros  # rclpy publisher of the same scene on real ROS 2 topics, for testing
 ```
 
 The container uses host networking so DDS discovery works against the robot's
