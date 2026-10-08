@@ -49,3 +49,29 @@ decoders that take `fixedFrame` (`decoders.ts`: path / pose_stamped /
 pose_array L88-90, point_cloud2 / laser_scan / livox L126-128, marker /
 marker_array L159-160) and post the `data` message again. Limit this to
 depth-1 / transient-local subscriptions so 10 Hz clouds are not re-sent.
+
+## Tier 1 notes (2026-10-09)
+
+- **WebGPU backend not exercised for the Tier 1 render passes.** The machine
+  this was developed on falls back to WebGL2 (`Renderer: WebGL2` in the status
+  bar), so the colour-ID pick pass (`web/src/render/picking.ts`, float MRT +
+  `readRenderTargetPixelsAsync`) and the Camera display's second renderer were
+  only verified on WebGL2. On WebGPU the pick readback goes through
+  `copyTextureToBuffer`; the row order is handled by the `flipY` branch, but a
+  first run on WebGPU should check one pick against a known object.
+- **Pause and the tf cache.** The Time panel's Pause freezes the tf snapshot at
+  the paused ROS time (`tf_time`). The worker's tf buffer keeps 10 s, so after
+  about 10 s of pause frames start to disappear (lookups at the frozen time fall
+  out of the cache) until Pause is released. RViz behaves the same way with its
+  own buffer; a fix would stop evicting while paused.
+- **Camera display shares GPU data with a second renderer.** three.js clears an
+  attribute's `updateRanges` after the first renderer uploads, so the Camera
+  panel re-uploads whole point-cloud buffers each frame (measured 1.6 ms for the
+  mock scene; grows with cloud size). Rendering the camera view with the main
+  renderer into a render target and blitting to the panel would avoid it.
+- **Select tool and 300k-point boxes.** A box over a dense cloud returns one hit
+  per visible point; the Selection panel is virtualised, but the highlight boxes
+  stop at 2,000 hits (`SelectionManager.MAX_HIGHLIGHTS`).
+- **Image display:** only raw `sensor_msgs/Image` encodings
+  (rgb8/rgba8/bgr8/bgra8/mono8/mono16/8UC1/8UC3/8UC4/16UC1/32FC1);
+  compressed / image_transport is Tier 2.
