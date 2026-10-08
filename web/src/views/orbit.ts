@@ -1,8 +1,8 @@
 /**
  * rviz_default_plugins/Orbit (orbit_view_controller.cpp): the camera orbits a
- * focal point; left drag rotates, middle / shift+left pans the focal point,
- * right drag or wheel changes the distance, shift+wheel moves the focal point
- * along the view direction.
+ * focal point; left drag rotates (dragging down raises the camera, as in rviz2),
+ * middle / shift+left pans the focal point, right drag or wheel changes the
+ * distance, shift+wheel moves the focal point along the view direction.
  */
 
 import * as THREE from 'three/webgpu';
@@ -81,7 +81,8 @@ export class OrbitViewController extends ViewControllerBase {
     const middle = (e.buttons & 4) !== 0;
     if (left && !e.shift) {
       this.yaw.setValue(this.yaw.value() - e.dx * 0.005, 'user');
-      this.pitch.setValue(this.pitch.value() - e.dy * 0.005, 'user');
+      // rviz2: pitch(-dy * ROTATION_SPEED) -> pitch_property_->add(+dy * ROTATION_SPEED); dragging down raises the camera.
+      this.pitch.setValue(this.pitch.value() + e.dy * 0.005, 'user');
     } else if (middle || (left && e.shift)) {
       const fovY = THREE.MathUtils.degToRad(this.camera.fov);
       const fovX = 2 * Math.atan(Math.tan(fovY / 2) * this.aspect);

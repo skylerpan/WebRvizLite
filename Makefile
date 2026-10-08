@@ -70,6 +70,12 @@ docker-build-ros:
 docker-run-ros:
 	$(COMPOSE) run --rm dev ./target/release/webrvizlite --bind 0.0.0.0 --port 8766 -d fixtures/mock_scene.rviz
 
+# Run the ROS-enabled server from the container (host network → http://127.0.0.1:8766,
+# leaving 8765 free for the host `--mock` server).
+# DDS config: conf/cyclonedds.xml via CYCLONEDDS_URI (see docker/compose.yml).
+docker-run-rosd:
+	$(COMPOSE) run -d --rm dev ./target/release/webrvizlite --bind 0.0.0.0 --port 8766 
+
 # rclpy publisher of the whole mock scene (every topic in fixtures/mock_scene.rviz,
 # including livox_ros_driver2/CustomMsg) for testing the r2r path without hardware.
 docker-mock-scene:

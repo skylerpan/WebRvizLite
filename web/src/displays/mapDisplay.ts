@@ -245,6 +245,13 @@ export class MapDisplay extends RosTopicDisplayBase<DataMessage> {
     this.mapOrigin = null;
   }
 
+  override fixedFrameChanged() {
+    // Keep the cached grid: update() re-transforms it into the new Fixed Frame
+    // every frame and rewrites the Transform status. Do not call reset() /
+    // status.clear(): that would also drop Topic / Update Topic errors that are
+    // only set at subscribe time (mirrors rviz MapDisplay::fixedFrameChanged()).
+  }
+
   override dispose() {
     this.unsubscribeUpdates();
     this.gridTexture?.dispose();

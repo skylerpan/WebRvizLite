@@ -1,7 +1,8 @@
 # Running troubleshooting
 
 Problems hit when starting the server, with cause and fix. Build-time problems
-are in [`build-troubleshooting.md`](build-troubleshooting.md).
+are in [`build-troubleshooting.md`](build-troubleshooting.md); problems that are
+understood but not fixed yet are in [`todo.md`](todo.md).
 
 ## Browser on another machine cannot connect
 
@@ -58,6 +59,31 @@ make docker-build-ros
 Then `ros2 topic info -v <topic>_updates` should list a `webrvizlite`
 subscriber. Alternatively set `always_send_full_costmap: true` on the Nav2
 costmap nodes, at the cost of sending the whole grid every cycle.
+
+## Map display disappears after changing the Fixed Frame
+
+**Symptom:** with a Map display showing a latched map (e.g. `/robot01/map`,
+`nav_msgs/OccupancyGrid`, transient-local, published once), changing
+`Global Options → Fixed Frame` makes the map vanish and it never comes back
+until the publisher sends the grid again or the display is re-subscribed.
+After the switch, `<topic>_updates` patches and the `Binary view` toggle are
+silently ignored too.
+
+**Cause:** a Fixed Frame change calls `fixedFrameChanged()` on every display,
+and the base implementation (`web/src/displays/Display.ts`) just runs
+`reset()`. `MapDisplay.reset()` drops the cached grid (`raw`, `mapOrigin`), so
+`update()` has nothing left to place. The map's transform is not baked in at
+decode time (`web/src/worker/decoders.ts`, `occupancy_grid` ignores
+`fixedFrame`); `update()` re-places the grid in the current Fixed Frame every
+frame, so there was never anything to re-decode.
+
+**Fix:** `MapDisplay` overrides `fixedFrameChanged()` as a no-op
+(`web/src/displays/mapDisplay.ts`), the same as `tfDisplay.ts` and RViz's
+`MapDisplay::fixedFrameChanged()`. A real Reset, enable/disable and topic
+changes still go through `reset()` and drop the grid. The override does not
+call `status.clear()` either: `Topic` and `Update Topic` are only written at
+subscribe time and would otherwise disappear. The frontend is embedded in the
+server binary, so the fix needs `make docker-build-ros` and a server restart.
 
 ## Ctrl+C does not stop `make docker-run-ros`
 
