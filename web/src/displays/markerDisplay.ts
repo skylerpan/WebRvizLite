@@ -8,9 +8,6 @@
  */
 
 import * as THREE from 'three/webgpu';
-import { STLLoader } from 'three/addons/loaders/STLLoader.js';
-import { ColladaLoader } from 'three/addons/loaders/ColladaLoader.js';
-import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MessageFilterDisplayBase } from './Display';
 import { BoolPropertyImpl, GroupProperty } from '../property/Property';
 import type { ChangeSource, YamlValue } from '../property/types';
@@ -18,6 +15,7 @@ import type { DisplayClassInfo } from './types';
 import type { DataMessage } from '../worker/messages';
 import { MARKER_STRIDE, MarkerField, type MarkerArrayMsg } from '../worker/decoders';
 import { InstancedShapes } from '../render/instancedShapes';
+import { loadMesh } from '../render/meshLoader';
 import { TextSprite, UNIT_BOX, UNIT_CONE_Z, UNIT_CYLINDER_Z, UNIT_SPHERE } from '../render/primitives';
 import { boxAround, roQuaternion, roString, roVector, selectionGroup, setQuaternion, setVector } from './selectionInfo';
 import type { PickHit } from '../render/picking';
@@ -57,28 +55,6 @@ class Entry {
   frameId = '';
 }
 
-const meshCache = new Map<string, Promise<THREE.Object3D>>();
-
-/** Loads STL / DAE / OBJ by extension; package:// and file:// go through the server. */
-function loadMesh(uri: string): Promise<THREE.Object3D> {
-  let p = meshCache.get(uri);
-  if (p) return p;
-  const url = /^https?:\/\//.test(uri) ? uri : `/api/mesh?uri=${encodeURIComponent(uri)}`;
-  const ext = uri.split('?')[0].split('.').pop()?.toLowerCase();
-  p = (async () => {
-    if (ext === 'stl') return new THREE.Mesh(await new STLLoader().loadAsync(url), new THREE.MeshBasicMaterial());
-    if (ext === 'dae') {
-      const collada = await new ColladaLoader().loadAsync(url);
-      if (!collada) throw new Error('empty collada');
-      return collada.scene;
-    }
-    if (ext === 'obj') return await new OBJLoader().loadAsync(url);
-    throw new Error(`unsupported mesh format .${ext}`);
-  })();
-  p.catch(() => meshCache.delete(uri));
-  meshCache.set(uri, p);
-  return p;
-}
 
 /** One material per primitive kind for every marker (colour and alpha live in vertex attributes),
  * so updating a marker never creates a material or compiles a shader. */

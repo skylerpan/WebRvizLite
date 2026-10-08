@@ -21,6 +21,7 @@ import argparse
 import array
 import math
 import time
+from pathlib import Path
 
 import numpy as np
 import rclpy
@@ -32,7 +33,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import LaserScan, PointCloud2, PointField, Range
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import ColorRGBA, String
 from tf2_msgs.msg import TFMessage
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -123,6 +124,7 @@ class MockScene(Node):
         self.footprint_pub = self.create_publisher(PolygonStamped, '/footprint', 2)
         self.grid_cells_pub = self.create_publisher(GridCells, '/grid_cells', 2)
         self.range_pub = self.create_publisher(Range, '/range', 10)
+        self.urdf_pub = self.create_publisher(String, '/robot_description', latched)
 
         self.n_points = int(math.sqrt(n_points)) ** 2
         self.n_cubes = n_cubes
@@ -132,10 +134,21 @@ class MockScene(Node):
         self._prepare_livox()
 
         stamp = self.now()
+        optical = TransformStamped()
+        optical.header.stamp, optical.header.frame_id, optical.child_frame_id = stamp, 'camera_link', 'camera_optical_frame'
+        optical.transform.rotation.x, optical.transform.rotation.y, optical.transform.rotation.z, optical.transform.rotation.w = -0.5, 0.5, -0.5, 0.5
         self.tf_static_pub.publish(TFMessage(transforms=[
+            tf(stamp, 'base_footprint', 'base_link', 0.0, 0.0, 0.0),
+            tf(stamp, 'base_link', 'wheel_left_link', 0.0, 0.28, 0.127),
+            tf(stamp, 'base_link', 'wheel_right_link', 0.0, -0.28, 0.127),
+            tf(stamp, 'base_link', 'caster_front_link', 0.22, 0.0, 0.05),
+            tf(stamp, 'base_link', 'camera_link', 0.28, 0.0, 0.4),
+            optical,
             tf(stamp, 'base_link', 'laser', 0.2, 0.0, 0.3),
             tf(stamp, 'base_link', 'livox_frame', 0.0, 0.0, LIVOX_HEIGHT),
         ]))
+        urdf = Path(__file__).resolve().parent.parent / 'fixtures' / 'robot_description' / 'tier1_robot.urdf'
+        self.urdf_pub.publish(String(data=urdf.read_text()))
         self.map_pub.publish(self.make_map(stamp))
 
         self.create_timer(1 / 30, self.publish_tf)
@@ -165,7 +178,7 @@ class MockScene(Node):
     def publish_tf(self):
         x, y, yaw = self.pose()
         stamp = self.now()
-        self.tf_pub.publish(TFMessage(transforms=[tf(stamp, 'map', 'odom', 0.0, 0.0, 0.0), tf(stamp, 'odom', 'base_link', x, y, 0.0, yaw)]))
+        self.tf_pub.publish(TFMessage(transforms=[tf(stamp, 'map', 'odom', 0.0, 0.0, 0.0), tf(stamp, 'odom', 'base_footprint', x, y, 0.0, yaw)]))
 
     def publish_clock(self):
         self.clock_pub.publish(Clock(clock=self.now()))

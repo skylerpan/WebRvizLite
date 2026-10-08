@@ -42,6 +42,11 @@ pub struct Args {
     #[arg(long)]
     pub web_dir: Option<PathBuf>,
 
+    /// Extra `package://NAME/...` roots for /api/mesh, as NAME=DIR (repeatable).
+    /// `--mock` adds `webrvizlite_fixtures=<cwd>/fixtures` automatically.
+    #[arg(long = "package-path", value_name = "NAME=DIR")]
+    pub package_paths: Vec<String>,
+
     /// Use the built-in mock transport (synthetic /scan, /tf, /tf_static, /clock)
     /// instead of ROS 2. Works without a ROS installation.
     #[arg(long)]

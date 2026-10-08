@@ -5,7 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
-use axum::extract::Query;
+use axum::extract::{Query, State};
+
+use crate::AppState;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -24,31 +26,41 @@ fn ament_prefixes() -> Vec<PathBuf> {
         .collect()
 }
 
-/// `package://pkg/rel` → first `<prefix>/share/pkg/rel` that exists.
-fn resolve_package(rest: &str) -> Option<PathBuf> {
+/// `package://pkg/rel` → the configured `--package-path` root for `pkg`, else the
+/// first `<prefix>/share/pkg/rel` that exists.
+fn resolve_package(rest: &str, extra: &[(String, PathBuf)]) -> Option<PathBuf> {
     let (pkg, rel) = rest.split_once('/')?;
+    if let Some((_, dir)) = extra.iter().find(|(n, _)| n == pkg) {
+        let p = dir.join(rel);
+        return p.is_file().then_some(p);
+    }
     ament_prefixes()
         .into_iter()
         .map(|p| p.join("share").join(pkg).join(rel))
         .find(|p| p.is_file())
 }
 
-/// A file is served only when it lives under some `<prefix>/share/`.
-fn allowed(path: &Path) -> bool {
+/// A file is served only when it lives under some `<prefix>/share/` or a `--package-path` root.
+fn allowed(path: &Path, extra: &[(String, PathBuf)]) -> bool {
     let Ok(canon) = path.canonicalize() else {
         return false;
     };
-    ament_prefixes().iter().any(|p| {
-        p.join("share")
-            .canonicalize()
+    let prefixes = ament_prefixes();
+    let mut roots = prefixes
+        .iter()
+        .map(|p| p.join("share"))
+        .chain(extra.iter().map(|(_, d)| d.clone()));
+    roots.any(|root| {
+        root.canonicalize()
             .map(|s| canon.starts_with(s))
             .unwrap_or(false)
     })
 }
 
-pub async fn handler(Query(q): Query<MeshQuery>) -> Response {
+pub async fn handler(State(state): State<AppState>, Query(q): Query<MeshQuery>) -> Response {
+    let extra = &state.package_paths;
     let path = if let Some(rest) = q.uri.strip_prefix("package://") {
-        resolve_package(rest)
+        resolve_package(rest, extra)
     } else if let Some(rest) = q.uri.strip_prefix("file://") {
         Some(PathBuf::from(rest))
     } else {
@@ -61,7 +73,7 @@ pub async fn handler(Query(q): Query<MeshQuery>) -> Response {
     let Some(path) = path else {
         return (StatusCode::NOT_FOUND, format!("cannot resolve {}", q.uri)).into_response();
     };
-    if !allowed(&path) {
+    if !allowed(&path, extra) {
         return (
             StatusCode::FORBIDDEN,
             "mesh path is outside every ROS package share directory",

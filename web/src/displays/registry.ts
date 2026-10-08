@@ -16,6 +16,7 @@ import { POINT_STAMPED_INFO, PointStampedDisplay } from './pointStampedDisplay';
 import { POLYGON_INFO, PolygonDisplay } from './polygonDisplay';
 import { GRID_CELLS_INFO, GridCellsDisplay } from './gridCellsDisplay';
 import { RANGE_INFO, RangeDisplay } from './rangeDisplay';
+import { ROBOT_MODEL_INFO, RobotModelDisplay } from './robotModelDisplay';
 import type { DisplayRegistry } from './types';
 
 /** Builds the registry of built-in displays (spec §4.2: internal plugin-style registry). */
@@ -39,5 +40,6 @@ export function createDisplayRegistry(fixedFrame: () => string): DisplayRegistry
   r.register(POLYGON_INFO, () => new PolygonDisplay());
   r.register(GRID_CELLS_INFO, () => new GridCellsDisplay());
   r.register(RANGE_INFO, () => new RangeDisplay());
+  r.register(ROBOT_MODEL_INFO, () => new RobotModelDisplay());
   return r;
 }

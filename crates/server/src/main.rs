@@ -33,6 +33,8 @@ pub struct AppState {
     pub mock: bool,
     pub display_config: Option<PathBuf>,
     pub fixed_frame: Option<String>,
+    /// `package://NAME` roots served by /api/mesh in addition to the ament index.
+    pub package_paths: Arc<Vec<(String, PathBuf)>>,
     session_counter: Arc<AtomicU64>,
 }
 
@@ -88,6 +90,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let mut package_paths: Vec<(String, PathBuf)> = Vec::new();
+    for spec in &args.package_paths {
+        match spec.split_once('=') {
+            Some((name, dir)) if !name.is_empty() => {
+                package_paths.push((name.into(), PathBuf::from(dir)))
+            }
+            _ => return Err(format!("--package-path expects NAME=DIR, got {spec:?}").into()),
+        }
+    }
+    if args.mock {
+        let fixtures = std::env::current_dir()?.join("fixtures");
+        if fixtures.is_dir() {
+            package_paths.push(("webrvizlite_fixtures".into(), fixtures));
+        }
+    }
+    for (name, dir) in &package_paths {
+        tracing::info!(package = name, dir = %dir.display(), "serving package:// meshes");
+    }
+
     let (topics_tx, _) = broadcast::channel(16);
     let state = AppState {
         hub: hub::Hub::new(transport),
@@ -96,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mock: args.mock,
         display_config: args.display_config.clone(),
         fixed_frame: args.fixed_frame.clone(),
+        package_paths: Arc::new(package_paths),
         session_counter: Arc::new(AtomicU64::new(1)),
     };
     state.refresh_topics().await;

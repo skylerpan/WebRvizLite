@@ -64,6 +64,10 @@ pub const GRID_CELLS_TOPIC: &str = "/grid_cells";
 pub const GRID_CELLS_TYPE: &str = "nav_msgs/msg/GridCells";
 pub const RANGE_TOPIC: &str = "/range";
 pub const RANGE_TYPE: &str = "sensor_msgs/msg/Range";
+pub const ROBOT_DESCRIPTION_TOPIC: &str = "/robot_description";
+pub const STRING_TYPE: &str = "std_msgs/msg/String";
+/// URDF published on /robot_description (meshes resolve through `package://webrvizlite_fixtures/`).
+pub const ROBOT_URDF: &str = include_str!("../../../fixtures/robot_description/tier1_robot.urdf");
 /// Points per Livox frame (a Mid-360 publishes ~20k points per 100 ms).
 pub const LIVOX_POINTS: usize = 24_000;
 /// `livox_frame` sits this high above `base_link`.
@@ -121,6 +125,7 @@ impl MockTransport {
         channels.insert(FOOTPRINT_TOPIC, mk(POLYGON_TYPE, 2));
         channels.insert(GRID_CELLS_TOPIC, mk(GRID_CELLS_TYPE, 2));
         channels.insert(RANGE_TOPIC, mk(RANGE_TYPE, 4));
+        channels.insert(ROBOT_DESCRIPTION_TOPIC, mk(STRING_TYPE, 1));
         let this = Arc::new(Self {
             channels,
             published: Mutex::new(HashMap::new()),
@@ -131,6 +136,8 @@ impl MockTransport {
         this.channel(TF_STATIC_TOPIC)
             .send(encode_tf_static(now_stamp()));
         this.channel(MAP_TOPIC).send(encode_map(now_stamp()));
+        this.channel(ROBOT_DESCRIPTION_TOPIC)
+            .send(encode_string(ROBOT_URDF));
         let t = this.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_millis(100));
@@ -443,20 +450,78 @@ fn encode_tf(stamp: Stamp, pose: Pose2D) -> Vec<u8> {
         [0.0, 0.0, 0.0],
         [0.0, 0.0, 0.0, 1.0],
     );
+    // base_footprint → base_link is static (robot_state_publisher style), see encode_tf_static.
     transform(
         &mut w,
         stamp,
         "odom",
-        "base_link",
+        "base_footprint",
         [pose.x, pose.y, 0.0],
         yaw_quat(pose.yaw),
     );
     w.finish()
 }
 
+fn encode_string(s: &str) -> Vec<u8> {
+    let mut w = Writer::with_capacity(s.len() + 8);
+    w.string(s);
+    w.finish()
+}
+
 fn encode_tf_static(stamp: Stamp) -> Vec<u8> {
     let mut w = Writer::new();
-    w.seq_len(2);
+    w.seq_len(8);
+    let identity = [0.0, 0.0, 0.0, 1.0];
+    // Robot links (see fixtures/robot_description/tier1_robot.urdf joints).
+    transform(
+        &mut w,
+        stamp,
+        "base_footprint",
+        "base_link",
+        [0.0; 3],
+        identity,
+    );
+    transform(
+        &mut w,
+        stamp,
+        "base_link",
+        "wheel_left_link",
+        [0.0, 0.28, 0.127],
+        identity,
+    );
+    transform(
+        &mut w,
+        stamp,
+        "base_link",
+        "wheel_right_link",
+        [0.0, -0.28, 0.127],
+        identity,
+    );
+    transform(
+        &mut w,
+        stamp,
+        "base_link",
+        "caster_front_link",
+        [0.22, 0.0, 0.05],
+        identity,
+    );
+    transform(
+        &mut w,
+        stamp,
+        "base_link",
+        "camera_link",
+        [0.28, 0.0, 0.4],
+        identity,
+    );
+    // Optical frame: z forward, x right, y down (rpy -90°, 0, -90°).
+    transform(
+        &mut w,
+        stamp,
+        "camera_link",
+        "camera_optical_frame",
+        [0.0; 3],
+        [-0.5, 0.5, -0.5, 0.5],
+    );
     transform(
         &mut w,
         stamp,
@@ -1292,7 +1357,7 @@ mod tests {
         );
         let mut r = Reader::new(&bytes).unwrap();
         assert_eq!(r.seq_len(1).unwrap(), 2);
-        for expected in [("map", "odom", 0.0), ("odom", "base_link", 1.0)] {
+        for expected in [("map", "odom", 0.0), ("odom", "base_footprint", 1.0)] {
             r.i32().unwrap();
             r.u32().unwrap();
             assert_eq!(r.str().unwrap(), expected.0);
