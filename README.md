@@ -4,6 +4,10 @@ ROS 2 visualization in the browser, modelled on RViz 2 (lyrical, rviz2 15.2.6):
 same panels, property names, defaults and `.rviz` config format. Rendering is
 three.js (WebGPU with WebGL2 fallback) and only chases performance.
 
+![WebRvizLite showing the built-in mock scene: map, path, laser scan, a 300k-point cloud and markers, with orbit drag and wheel zoom](docs/media/overview.gif)
+
+*`make mock-rust`: the mock scene with no ROS 2 installed. Left drag orbits, wheel zooms, `Z` resets the view.*
+
 ## Layout
 
 | Path | What |
@@ -23,8 +27,13 @@ and (from M1 on) a sourced ROS 2 environment for the r2r bridge.
 
 ```sh
 make build            # wasm-pack → vite build → cargo build --release (mock transport only)
-./target/release/webrvizlite --mock --port 8765
+make mock-rust        # rebuild, then run the server with its built-in Rust mock scene (no ROS)
 ```
+
+Two mocks exist: `make mock-rust` is the server's own Rust `MockTransport`
+(host, nothing on ROS, full-scale scene); `make docker-mock-ros` is an rclpy node in
+the container publishing the same scene on real ROS 2 topics for the r2r
+bridge (see below).
 
 Build fails to load the workspace on a newer cargo? See
 [`docs/build-troubleshooting.md`](docs/build-troubleshooting.md).
@@ -59,7 +68,7 @@ make docker-build     # builds webrvizlite-dev (ros:humble-ros-base + Rust + Nod
 make docker-shell     # interactive shell with ROS sourced, repo mounted at /ws
 make docker-build-ros # wasm + web + cargo --features r2r, inside the container
 make docker-run-ros   # ROS-enabled server on http://127.0.0.1:8766 (host network)
-make docker-mock-scene # rclpy publisher of the same synthetic scene, for testing
+make docker-mock-ros  # rclpy publisher of the same scene on real ROS 2 topics, for testing
 ```
 
 The container uses host networking so DDS discovery works against the robot's
@@ -95,6 +104,10 @@ webrvizlite [-d config.rviz] [-f FRAME] [-t FORMAT] [-s IMAGE] [--bind ADDR] [--
 `--mock` uses the built-in synthetic transport. Anything after `--ros-args` is
 passed to rcl.
 
+![Displays panel: toggling PointCloud2 and MarkerArray, editing a PointCloud2 property, opening Add Display](docs/media/displays.gif)
+
+*Displays panel: the same tree, property names and Add Display dialog as RViz.*
+
 ## Shortcuts
 
 Chrome reserves Ctrl+N / Ctrl+T / Ctrl+W, so a few RViz bindings differ
@@ -121,6 +134,10 @@ cloud, laser scan, a 300k-point PointCloud2 at 10 Hz, a 24k-point Livox
 CustomMsg rosette scan, and a MarkerArray with
 every marker type plus 5,000 cubes. `?perf` adds frame-time counters to the
 status bar; `?debug` opens the topic panel.
+
+![Topic debug panel with per-topic Hz and byte rates, and the perf counters in the status bar](docs/media/debug-panel.gif)
+
+*`?debug&perf`: subscribe to topics by hand and watch receive rates; the status bar shows per-display frame times.*
 
 ## Tests
 
