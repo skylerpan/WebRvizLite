@@ -14,6 +14,8 @@ import { createDisplayRegistry } from './registry';
 import type { DisplayContext, DisplayRegistry } from './types';
 import { ViewManager } from '../views/ViewManager';
 import { ToolManager } from '../tools/ToolManager';
+import { PickRegistry } from '../render/picking';
+import { SelectionManager } from '../app/selection';
 
 /**
  * ROS / wall clock state behind the Time panel (rviz FrameManager pause +
@@ -74,6 +76,8 @@ export class VisualizationManager {
   readonly context: DisplayContext;
   readonly views: ViewManager;
   readonly tools: ToolManager;
+  readonly picking = new PickRegistry();
+  readonly selection = new SelectionManager();
   /** ROS time from the server clock, ns (frozen while the Time panel is paused). */
   readonly rosTimeNs: Accessor<bigint>;
   readonly time: TimeState;
@@ -102,11 +106,13 @@ export class VisualizationManager {
 
     this.time = new TimeState(bridge);
     this.rosTimeNs = this.time.rosTimeNs;
-    this.context = { scene, bridge, fixedFrame, tf: bridge.tf, rosTimeNs: this.rosTimeNs };
+    this.context = { scene, bridge, fixedFrame, tf: bridge.tf, rosTimeNs: this.rosTimeNs, picking: this.picking };
+    scene.add(this.selection.highlight);
 
     this.views = new ViewManager({ tf: bridge.tf, fixedFrame });
     scene.add(this.views.helpers);
-    this.tools = new ToolManager({ views: this.views, bridge, fixedFrame, rosTimeNs: this.rosTimeNs });
+    this.views.helpers.userData.noPick = true;
+    this.tools = new ToolManager({ views: this.views, bridge, fixedFrame, rosTimeNs: this.rosTimeNs, selection: this.selection });
 
     this.fixedFrameProperty.onChange((v) => {
       const frame = stripLeadingSlash(v);
@@ -150,6 +156,7 @@ export class VisualizationManager {
     this.updateFixedFrameStatusIfChanged();
     this.views.update(wallDt);
     this.root.update(wallDt, rosDt);
+    this.selection.update();
   }
 
   private lastStatusKey = '';

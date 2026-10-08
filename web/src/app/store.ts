@@ -10,7 +10,6 @@ import { getBridge } from './bridge';
 import { VisualizationManager } from '../displays/manager';
 import { DEFAULT_DISPLAYS_PANEL_STATE, RvizConfig, type DisplaysPanelState, type TimePanelState, type TreePanelState } from '../config/rvizConfig';
 import { RVIZ_PANELS, type Layout } from './layout';
-import { SelectionManager } from './selection';
 import type { Display, DisplayGroup } from '../displays/types';
 import type { Property, YamlValue } from '../property/types';
 import { DisplayGroupImpl } from '../displays/Display';
@@ -38,7 +37,7 @@ export class AppStore {
   /** The dockview layout once the main window is mounted. */
   readonly layout: Accessor<Layout | null>;
   readonly setLayout: (l: Layout | null) => void;
-  readonly selection = new SelectionManager();
+  readonly selection = this.manager.selection;
   readonly configName: Accessor<string>;
   readonly setConfigName: (s: string) => void;
   /** Expanded nodes of the Displays and Views trees (paths are computed at save time). */
@@ -163,6 +162,15 @@ export class AppStore {
     if (this.manager.tools.handleKey(key, e)) return true;
     if (key === 'z' || key === 'Z') {
       this.manager.views.current().reset();
+      return true;
+    }
+    if (key === 'f' || key === 'F') {
+      // rviz: F = look at the point under the cursor.
+      const vp = this.manager.tools.viewport();
+      if (vp) {
+        const m = vp.lastMouse();
+        void vp.pickPoint(m.x, m.y).then((hit) => { if (hit) this.manager.views.current().lookAt(hit.worldPos); });
+      }
       return true;
     }
     return false;

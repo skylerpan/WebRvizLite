@@ -76,6 +76,56 @@ pub struct TfBuffer {
     inner: tf::TfBuffer,
 }
 
+/// Channel values of one point of a raw cloud message, for the Selection panel.
+/// `kind` is the worker decoder name; returns `{"names": [...], "values": [...]}`.
+#[wasm_bindgen(js_name = pointInfoJson)]
+pub fn point_info_json(bytes: &[u8], kind: &str, index: u32) -> Result<String, JsError> {
+    let pts = match kind {
+        "point_cloud2" => {
+            let cloud = msgs::pointcloud::decode_point_cloud2(bytes)
+                .map_err(|e| JsError::new(&e.to_string()))?;
+            pointcloud::points_from_cloud2(&cloud).map_err(JsError::new)?
+        }
+        "laser_scan" => pointcloud::points_from_laser_scan(
+            &msgs::pointcloud::decode_laser_scan(bytes)
+                .map_err(|e| JsError::new(&e.to_string()))?,
+        ),
+        "livox_custom_msg" => pointcloud::points_from_livox(
+            &msgs::pointcloud::decode_livox_custom_msg(bytes)
+                .map_err(|e| JsError::new(&e.to_string()))?,
+        ),
+        other => return Err(JsError::new(&format!("not a point cloud decoder: {other}"))),
+    };
+    let i = index as usize;
+    if i >= pts.len() {
+        return Err(JsError::new("point index out of range"));
+    }
+    let mut names: Vec<&str> = vec!["x", "y", "z"];
+    let mut values: Vec<f64> = vec![
+        pts.xyz[i * 3] as f64,
+        pts.xyz[i * 3 + 1] as f64,
+        pts.xyz[i * 3 + 2] as f64,
+    ];
+    for (name, data) in &pts.channels {
+        names.push(name);
+        values.push(data.get(i).copied().unwrap_or(f32::NAN) as f64);
+    }
+    if let Some(rgb) = &pts.rgb {
+        names.push("rgb");
+        values.push(rgb.get(i).copied().unwrap_or(0) as f64);
+    }
+    let values: Vec<serde_json::Value> = values
+        .into_iter()
+        .map(|v| {
+            serde_json::Number::from_f64(v)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null)
+        })
+        .collect();
+    serde_json::to_string(&serde_json::json!({ "names": names, "values": values }))
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
 #[wasm_bindgen]
 impl TfBuffer {
     #[wasm_bindgen(constructor)]

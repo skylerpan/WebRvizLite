@@ -15,6 +15,8 @@ export class BridgeClient {
   private nextId = 1000; // ids below are reserved for the worker's own subscriptions
   private readonly handlers = new Map<number, DataHandler>();
   private readonly errorHandlers = new Map<number, ErrorHandler>();
+  private nextRequest = 1;
+  private readonly pointRequests = new Map<number, (info: { names: string[]; values: number[] } | null) => void>();
   readonly tf = new TfSnapshot();
 
   readonly wsState;
@@ -77,6 +79,12 @@ export class BridgeClient {
       case 'tf':
         measure('tf snapshot', () => this.tf.apply(msg));
         break;
+      case 'point_info': {
+        const resolve = this.pointRequests.get(msg.requestId);
+        this.pointRequests.delete(msg.requestId);
+        resolve?.(msg.info);
+        break;
+      }
     }
   }
 
@@ -126,6 +134,15 @@ export class BridgeClient {
 
   setTfRate(hz: number) {
     this.send({ type: 'tf_rate', hz });
+  }
+
+  /** Channel values of point `index` of subscription `id`'s latest message (needs `selectable` in its options). */
+  describePoint(id: number, index: number): Promise<{ names: string[]; values: number[] } | null> {
+    const requestId = this.nextRequest++;
+    return new Promise((resolve) => {
+      this.pointRequests.set(requestId, resolve);
+      this.send({ type: 'describe_point', id, index, requestId });
+    });
   }
 
   /** Freezes tf snapshots at `timeNs` (0n = follow the latest transforms). */

@@ -9,6 +9,10 @@ import { UnknownTool, isTool } from './Tool';
 import { GroupProperty } from '../property/Property';
 import { SET_GOAL_INFO, SetGoalTool } from './setGoal';
 import { SET_INITIAL_POSE_INFO, SetInitialPoseTool } from './setInitialPose';
+import { SELECT_INFO, SelectTool } from './select';
+import { FOCUS_CAMERA_INFO, FocusCameraTool } from './focusCamera';
+import { MEASURE_INFO, MeasureTool } from './measure';
+import { PUBLISH_POINT_INFO, PublishPointTool } from './publishPoint';
 import type { Tool, ToolClassInfo, ToolContext, ViewportServices } from './types';
 import type { YamlValue } from '../property/types';
 import type { ViewportPointerEvent } from '../views/types';
@@ -31,10 +35,10 @@ export class ToolManager {
   readonly current: Accessor<Tool | null>;
   private readonly setCurrentSignal: (t: Tool | null) => void;
   private readonly ctx: ToolContext;
-  private viewport: ViewportServices | null = null;
+  private viewport_: ViewportServices | null = null;
 
   constructor(ctx: Omit<ToolContext, 'revertToDefault' | 'viewport'>) {
-    this.ctx = { ...ctx, viewport: () => this.viewport, revertToDefault: () => this.revertToDefault() };
+    this.ctx = { ...ctx, viewport: () => this.viewport_, revertToDefault: () => this.revertToDefault() };
     const [tools, setTools] = createSignal<readonly Tool[]>([]);
     this.tools = tools;
     this.setTools = (t) => {
@@ -45,6 +49,10 @@ export class ToolManager {
     this.register(MOVE_CAMERA_INFO, () => new MoveCameraTool());
     this.register(SET_INITIAL_POSE_INFO, () => new SetInitialPoseTool());
     this.register(SET_GOAL_INFO, () => new SetGoalTool());
+    this.register(SELECT_INFO, () => new SelectTool());
+    this.register(FOCUS_CAMERA_INFO, () => new FocusCameraTool());
+    this.register(MEASURE_INFO, () => new MeasureTool());
+    this.register(PUBLISH_POINT_INFO, () => new PublishPointTool());
     this.load(null);
   }
 
@@ -58,8 +66,12 @@ export class ToolManager {
   attachViewport(v: ViewportServices | null) {
     const cur = this.current();
     cur?.deactivate();
-    this.viewport = v;
+    this.viewport_ = v;
     if (v) cur?.activate();
+  }
+
+  viewport(): ViewportServices | null {
+    return this.viewport_;
   }
 
   register(info: ToolClassInfo, create: () => Tool) {

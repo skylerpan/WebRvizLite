@@ -5,7 +5,7 @@
 // Compiled against the DOM lib for simplicity; everything used here
 // (WebSocket, postMessage, location) exists in both DOM and worker scopes.
 
-import init, { TfBuffer, version } from '../wasm/pkg/webrvizlite';
+import init, { TfBuffer, pointInfoJson, version } from '../wasm/pkg/webrvizlite';
 import type { Decoder, Hello, MainToWorker, QosProfile, SubscriptionStats, WorkerToMain } from './messages';
 import { decodeMessage } from './decoders';
 
@@ -35,6 +35,8 @@ export interface Subscription {
   lastBytes: number;
   lastReceiveMs: number;
   error: string | null;
+  /** Latest payload, kept when the subscription is selectable (point channel lookups). */
+  lastPayload?: Uint8Array;
   recent: Array<[number, number]>;
 }
 
@@ -156,6 +158,8 @@ function onFrame(buf: ArrayBuffer) {
     return;
   }
   if (s.decoder === 'none' || !tfBuffer) return;
+  if (s.options.selectable) s.lastPayload = payload;
+  else s.lastPayload = undefined;
   try {
     const result = decodeMessage(s, payload, tfBuffer, fixedFrame);
     if (result) {
@@ -257,6 +261,19 @@ onmessage = (ev: MessageEvent<MainToWorker>) => {
       tfTimeNs = m.timeNs;
       postTfSnapshot();
       break;
+    case 'describe_point': {
+      const s = subscriptions.get(m.id);
+      let info: { names: string[]; values: number[] } | null = null;
+      if (s?.lastPayload) {
+        try {
+          info = JSON.parse(pointInfoJson(s.lastPayload, s.decoder, m.index)) as { names: string[]; values: number[] };
+        } catch (e) {
+          console.warn('[worker] describe_point failed:', e);
+        }
+      }
+      post({ type: 'point_info', requestId: m.requestId, info });
+      break;
+    }
   }
 };
 

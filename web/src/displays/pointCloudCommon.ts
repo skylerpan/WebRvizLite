@@ -9,7 +9,11 @@ import { BoolPropertyImpl, ColorPropertyImpl, EnumPropertyImpl, FloatPropertyImp
 import type { Display } from './types';
 import type { DataMessage } from '../worker/messages';
 import type { PointCloudMsg } from '../worker/decoders';
+import type * as THREE from 'three/webgpu';
 import { CloudBuffer, CloudObject, type PointStyle } from '../render/pointCloud';
+import { boxAround, roString, roVector, selectionGroup } from './selectionInfo';
+import type { PickHit } from '../render/picking';
+import type { Property } from '../property/types';
 
 const STYLES: PointStyle[] = ['Points', 'Squares', 'Flat Squares', 'Spheres', 'Boxes', 'Tiles'];
 const ALL_TRANSFORMERS = ['FlatColor', 'AxisColor', 'Intensity', 'RGB8', 'RGBF32'];
@@ -17,6 +21,8 @@ const ALL_TRANSFORMERS = ['FlatColor', 'AxisColor', 'Intensity', 'RGB8', 'RGBF32
 export interface CloudHost extends Display {
   /** Push new decoder options to the worker. */
   pushDecoderOptions(): void;
+  /** Channel values of point `index` of the latest message (worker re-decode), or null when unavailable. */
+  describePoint(index: number): Promise<{ names: string[]; values: number[] } | null>;
 }
 
 export class PointCloudCommon {
@@ -75,6 +81,9 @@ export class PointCloudCommon {
     this.minIntensity = new FloatPropertyImpl('Min Intensity', 0, parent, { description: 'Minimum possible intensity value, used to interpolate from Min Color to Max Color for a point.', hidden: true });
     this.maxIntensity = new FloatPropertyImpl('Max Intensity', 4096, parent, { description: 'Maximum possible intensity value, used to interpolate from Min Color to Max Color for a point.', hidden: true });
 
+    this.selectable.onChange((on) => {
+      for (const c of [...this.clouds, ...this.pool]) if (on) host.makePickable(c.object); else host.releasePickable(c.object);
+    });
     this.style.onChange(() => this.updateStyle());
     this.sizeMeters.onChange(() => this.updateStyle());
     this.sizePixels.onChange(() => this.updateStyle());
@@ -176,6 +185,7 @@ export class PointCloudCommon {
     const buffer = new CloudBuffer();
     const object = new CloudObject(buffer);
     this.host.sceneNode.add(object);
+    if (this.selectable.value()) this.host.makePickable(object);
     return { buffer, object, stampMs: nowMs };
   }
 
@@ -194,6 +204,37 @@ export class PointCloudCommon {
 
   pointCount(): number {
     return this.totalPoints;
+  }
+
+  /** Selection panel rows for a picked point: position / colour now, channels once the worker answers. */
+  describeSelection(hit: PickHit): Property | null {
+    const slot = this.clouds.find((c) => c.object === hit.object);
+    if (!slot || hit.instance >= slot.buffer.count) return null;
+    const i = hit.instance;
+    const p = slot.buffer.positions.array as Float32Array;
+    const c = slot.buffer.colors.array as Uint8Array;
+    const g = selectionGroup(`Point ${i} [${this.host.name()}]`);
+    roVector(g, 'Position', { x: p[i * 3], y: p[i * 3 + 1], z: p[i * 3 + 2] }, 'Position in the fixed frame.');
+    roString(g, 'Color', `${c[i * 3]}; ${c[i * 3 + 1]}; ${c[i * 3 + 2]}`);
+    const latest = this.clouds.reduce((a, b) => (b.stampMs >= a.stampMs ? b : a), this.clouds[0]);
+    if (slot === latest) {
+      void this.host.describePoint(i).then((info) => {
+        if (!info) return;
+        for (let k = 0; k < info.names.length; k++) {
+          const v = info.values[k];
+          roString(g, info.names[k], Number.isInteger(v) ? String(v) : v.toFixed(4), 'Value of this channel in the message (sensor frame).');
+        }
+      });
+    }
+    return g;
+  }
+  selectionBounds(hit: PickHit, out: THREE.Box3): boolean {
+    const slot = this.clouds.find((c) => c.object === hit.object);
+    if (!slot || hit.instance >= slot.buffer.count) return false;
+    const i = hit.instance;
+    const p = slot.buffer.positions.array as Float32Array;
+    const size = this.style.value() === 'Points' ? 0.05 : Math.max(0.02, this.sizeMeters.value() * 2);
+    return boxAround(out, { x: p[i * 3], y: p[i * 3 + 1], z: p[i * 3 + 2] }, size);
   }
 
   reset() {

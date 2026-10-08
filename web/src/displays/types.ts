@@ -9,6 +9,7 @@
  */
 
 import type { Accessor } from 'solid-js';
+import type { PickHit, PickRegistry } from '../render/picking';
 import type * as THREE from 'three/webgpu';
 import type { BoolProperty, ChangeSource, Property, StatusLevel, StatusListProperty, YamlMap } from '../property/types';
 import type { BridgeClient } from '../worker/client';
@@ -25,6 +26,8 @@ export interface DisplayContext {
   readonly tf: TfSnapshot;
   /** Current ROS time in nanoseconds (Time panel / sim time). */
   readonly rosTimeNs: Accessor<bigint>;
+  /** Pick-id registry for selectable objects (spec §7.3). */
+  readonly picking: PickRegistry;
 }
 
 /** Registry metadata, matching plugins_description.xml. */
@@ -59,6 +62,13 @@ export interface Display extends BoolProperty {
 
   setStatus(level: StatusLevel, name: string, text: string): void;
   deleteStatus(name: string): void;
+  /** Selection panel description of a picked object of this display (null = not selectable). */
+  /** Registers / forgets a scene object as selectable (owned by this display). */
+  makePickable(obj: THREE.Object3D): void;
+  releasePickable(obj: THREE.Object3D): void;
+  describeSelection(hit: PickHit): Property | null;
+  selectionBounds(hit: PickHit, out: THREE.Box3): boolean;
+  updateSelection(hit: PickHit, prop: Property): void;
 
   /** Property::save plus `Class`, `Name`, `Enabled` (rviz_common::Display::save). */
   save(): YamlMap;

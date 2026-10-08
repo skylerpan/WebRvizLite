@@ -161,6 +161,8 @@ export class MapDisplay extends RosTopicDisplayBase<DataMessage> {
     this.gridTexture.flipY = false;
     if (!this.mesh) {
       this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.material!);
+      // depthWrite is off for alpha blending; the pick pass turns it on so the map occludes.
+      this.mesh.userData.pickOccluder = true;
       // PlaneGeometry is centred; move its origin to the bottom-left corner (cell 0,0).
       this.mesh.geometry.translate(0.5, 0.5, 0);
       this.sceneNode.add(this.mesh);

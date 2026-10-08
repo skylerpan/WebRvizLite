@@ -125,6 +125,7 @@ export class TextSprite extends THREE.Sprite {
   constructor(text: string, charHeight = 0.1, color = '#ffffff') {
     super(new THREE.SpriteMaterial({ depthTest: false, transparent: true }));
     this.renderOrder = 1000;
+    this.userData.noPick = true;
     this.setText(text, charHeight, color);
   }
 

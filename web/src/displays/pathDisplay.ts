@@ -11,6 +11,10 @@ import type { DisplayClassInfo } from './types';
 import type { DataMessage } from '../worker/messages';
 import type { PosesMsg } from '../worker/decoders';
 import { InstancedArrows, InstancedAxes } from '../render/instanced';
+import { addPoseRows, boxAround, selectionGroup } from './selectionInfo';
+import type { PickHit } from '../render/picking';
+import type { Property } from '../property/types';
+
 
 export const PATH_INFO: DisplayClassInfo = {
   classId: 'rviz_default_plugins/Path',
@@ -114,12 +118,16 @@ export class PathDisplay extends MessageFilterDisplayBase<DataMessage> {
     const n = this.bufferLength.value();
     while (this.slots.length > n) {
       const s = this.slots.pop()!;
+      this.releasePickable(s.axes);
+      this.releasePickable(s.arrows);
       s.dispose();
       this.sceneNode.remove(s.line, s.axes, s.arrows);
     }
     while (this.slots.length < n) {
       const s = new PathSlot(this.material);
       this.sceneNode.add(s.line, s.axes, s.arrows);
+      this.makePickable(s.axes);
+      this.makePickable(s.arrows);
       this.slots.push(s);
     }
     this.next %= Math.max(1, n);
@@ -184,6 +192,24 @@ export class PathDisplay extends MessageFilterDisplayBase<DataMessage> {
     this.next = (this.next + 1) % this.slots.length;
     slot.data = d;
     this.drawSlot(slot);
+  }
+
+  override describeSelection(hit: PickHit): Property | null {
+    const slot = this.slots.find((s) => s.axes === hit.object || s.arrows === hit.object);
+    const d = slot?.data;
+    if (!d || hit.instance >= d.count) return null;
+    const g = selectionGroup(`Pose ${hit.instance} [${this.name()}]`);
+    addPoseRows(g, d.positions, d.orientations, hit.instance);
+    return g;
+  }
+  override selectionBounds(hit: PickHit, out: THREE.Box3): boolean {
+    const slot = this.slots.find((s) => s.axes === hit.object || s.arrows === hit.object);
+    const d = slot?.data;
+    if (!d || hit.instance >= d.count) return false;
+    const i = hit.instance;
+    const o = this.offset.value();
+    const len = this.poseStyle.value() === 'Axes' ? this.poseAxesLength.value() : this.poseArrowShaftLength.value() + this.poseArrowHeadLength.value();
+    return boxAround(out, { x: d.positions[i * 3] + o.x, y: d.positions[i * 3 + 1] + o.y, z: d.positions[i * 3 + 2] + o.z }, len);
   }
 
   override reset() {

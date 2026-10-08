@@ -105,7 +105,9 @@ export type MainToWorker =
   | { type: 'set_fixed_frame'; frame: string }
   | { type: 'tf_rate'; hz: number }
   /** Time the tf snapshot is taken at (ns); 0n = latest. Set while the Time panel is paused. */
-  | { type: 'tf_time'; timeNs: bigint };
+  | { type: 'tf_time'; timeNs: bigint }
+  /** Channel values of one point of the subscription's latest cloud (Selection panel). */
+  | { type: 'describe_point'; id: number; index: number; requestId: number };
 
 export type WorkerToMain =
   | { type: 'wasm'; version: string }
@@ -114,5 +116,6 @@ export type WorkerToMain =
   | { type: 'clock'; rosTimeNs: bigint; wallTimeNs: bigint }
   | { type: 'error'; id: number | null; message: string }
   | { type: 'stats'; subscriptions: SubscriptionStats[] }
+  | { type: 'point_info'; requestId: number; info: { names: string[]; values: number[] } | null }
   | TfSnapshotMessage
   | DataMessage;

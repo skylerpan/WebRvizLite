@@ -11,6 +11,9 @@ import {
 } from '../property/Property';
 import type { Property } from '../property/types';
 import { Arrow, Axes, TextSprite, pointXAxisAt } from '../render/primitives';
+import { boxAround, roQuaternion, roString, roVector, selectionGroup, setQuaternion, setVector } from './selectionInfo';
+import type { PickHit } from '../render/picking';
+
 import type { DisplayClassInfo } from './types';
 
 export const TF_INFO: DisplayClassInfo = {
@@ -142,11 +145,14 @@ export class TfDisplay extends DisplayBase {
           if (!this.changingAll) this.syncAllEnabled();
         });
         this.sceneNode.add(info.node);
+        info.node.userData.frame = name;
+        this.makePickable(info.node);
         this.frames.set(name, info);
       }
     }
     for (const [name, info] of this.frames) {
       if (!seen.has(name)) {
+        this.releasePickable(info.node);
         info.dispose();
         info.node.removeFromParent();
         this.framesGroup.removeChild(info.enabled);
@@ -267,6 +273,32 @@ export class TfDisplay extends DisplayBase {
       }
     }
     this.framesLoaded = true;
+  }
+
+  override describeSelection(hit: PickHit): Property | null {
+    const info = this.frames.get(hit.object?.userData.frame as string);
+    if (!info) return null;
+    const g = selectionGroup(`Frame ${info.name}`);
+    roString(g, 'Parent', info.parentProp.value());
+    roVector(g, 'Position', info.position.value());
+    roQuaternion(g, 'Orientation', info.orientation.value());
+    roVector(g, 'Relative Position', info.relPosition.value());
+    roQuaternion(g, 'Relative Orientation', info.relOrientation.value());
+    return g;
+  }
+  override updateSelection(hit: PickHit, prop: Property) {
+    const info = this.frames.get(hit.object?.userData.frame as string);
+    if (!info) return;
+    (prop.child('Parent') as StringPropertyImpl | undefined)?.setValue(info.parentProp.value());
+    setVector(prop.child('Position'), info.position.value());
+    setQuaternion(prop.child('Orientation'), info.orientation.value());
+    setVector(prop.child('Relative Position'), info.relPosition.value());
+    setQuaternion(prop.child('Relative Orientation'), info.relOrientation.value());
+  }
+  override selectionBounds(hit: PickHit, out: THREE.Box3): boolean {
+    const info = this.frames.get(hit.object?.userData.frame as string);
+    if (!info) return false;
+    return boxAround(out, info.axes.position, 0.4 * this.markerScale.value());
   }
 
   override dispose() {

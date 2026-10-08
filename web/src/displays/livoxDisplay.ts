@@ -8,6 +8,8 @@
  */
 
 import { MessageFilterDisplayBase } from './Display';
+import type { PickHit } from '../render/picking';
+import type * as THREE from 'three/webgpu';
 import { PointCloudCommon, type CloudHost } from './pointCloudCommon';
 import type { DisplayClassInfo } from './types';
 import type { DataMessage } from '../worker/messages';
@@ -30,12 +32,24 @@ export class LivoxDisplay extends MessageFilterDisplayBase<DataMessage> implemen
   }
 
   protected override decoderOptions() {
-    return { color: this.cloud.colorOptions() };
+    return { color: this.cloud.colorOptions(), selectable: this.cloud.selectable.value() };
   }
 
   pushDecoderOptions() {
     this.updateDecoderOptions();
   }
+
+  describePoint(index: number) {
+    if (this.subscriptionId === null || !this.context) return Promise.resolve(null);
+    return this.context.bridge.describePoint(this.subscriptionId, index);
+  }
+  override describeSelection(hit: PickHit) {
+    return this.cloud.describeSelection(hit);
+  }
+  override selectionBounds(hit: PickHit, out: THREE.Box3) {
+    return this.cloud.selectionBounds(hit, out);
+  }
+
 
   processMessage(msg: DataMessage) {
     const d = msg.data as PointCloudMsg;

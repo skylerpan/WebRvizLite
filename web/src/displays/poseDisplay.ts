@@ -7,6 +7,10 @@ import type { DisplayClassInfo } from './types';
 import type { DataMessage } from '../worker/messages';
 import type { PosesMsg } from '../worker/decoders';
 import { Arrow, Axes } from '../render/primitives';
+import { boxAround, roQuaternion, roVector, selectionGroup, setQuaternion, setVector } from './selectionInfo';
+import type { PickHit } from '../render/picking';
+import type { Property } from '../property/types';
+
 
 export const POSE_INFO: DisplayClassInfo = {
   classId: 'rviz_default_plugins/Pose',
@@ -50,7 +54,24 @@ export class PoseDisplay extends MessageFilterDisplayBase<DataMessage> {
     this.arrow = new Arrow();
     this.axes = new Axes();
     this.sceneNode.add(this.arrow, this.axes);
+    this.makePickable(this.sceneNode);
     this.updateShape();
+  }
+
+  override describeSelection(_hit: PickHit): Property | null {
+    if (!this.hasPose) return null;
+    const g = selectionGroup(`Pose [${this.name()}]`);
+    roVector(g, 'Position', this.sceneNode.position);
+    roQuaternion(g, 'Orientation', this.sceneNode.quaternion);
+    return g;
+  }
+  override updateSelection(_hit: PickHit, prop: Property) {
+    setVector(prop.child('Position'), this.sceneNode.position);
+    setQuaternion(prop.child('Orientation'), this.sceneNode.quaternion);
+  }
+  override selectionBounds(_hit: PickHit, out: THREE.Box3): boolean {
+    const len = this.shape.value() === 'Arrow' ? this.shaftLength.value() + this.headLength.value() : this.axesLength.value();
+    return boxAround(out, this.sceneNode.position, len);
   }
 
   private updateShape() {

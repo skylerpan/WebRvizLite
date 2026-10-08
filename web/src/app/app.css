@@ -193,3 +193,5 @@ select.wrl-edit { background: #1e1e1e; }
 .wrl-add-tool-list { display: flex; flex-direction: column; gap: 4px; min-width: 360px; }
 .wrl-add-tool-list button { text-align: left; font: inherit; background: #333; color: var(--wrl-fg); border: 1px solid var(--wrl-border); border-radius: 3px; padding: 4px 8px; cursor: pointer; }
 .wrl-add-tool-list button:hover { background: #444; }
+
+.wrl-select-box { position: absolute; pointer-events: none; border: 1px solid #ffd866; background: rgba(255, 216, 102, 0.15); z-index: 5; }

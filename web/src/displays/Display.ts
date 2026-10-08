@@ -10,6 +10,7 @@ import type { ChangeSource, Property, StatusLevel, YamlMap, YamlValue } from '..
 import type { Decoder, QosProfile } from '../worker/messages';
 import type { Display, DisplayClassInfo, DisplayContext, DisplayGroup, DisplayRegistry, MessageFilterDisplay, RosTopicDisplay } from './types';
 import { measure } from '../render/perf';
+import type { PickHit } from '../render/picking';
 
 export abstract class DisplayBase extends BoolPropertyImpl implements Display {
   readonly classId: string;
@@ -63,6 +64,7 @@ export abstract class DisplayBase extends BoolPropertyImpl implements Display {
   }
   dispose() {
     if (this.enabled()) this.onDisable();
+    this.releaseAllPickables();
     this.sceneNode.removeFromParent();
     this.context = null;
     this.initialized = false;
@@ -72,6 +74,31 @@ export abstract class DisplayBase extends BoolPropertyImpl implements Display {
     if (this.status.parent !== this) this.addChild(this.status, 0);
     this.status.setStatus(level, name, text);
   }
+
+  // --- selection (spec §7.3) ----------------------------------------------
+  private readonly pickables = new Set<THREE.Object3D>();
+
+  /** Registers `obj` (and everything under it) as selectable, owned by this display. */
+  makePickable(obj: THREE.Object3D) {
+    if (!this.context) return;
+    this.context.picking.register(this, obj);
+    this.pickables.add(obj);
+  }
+  releasePickable(obj: THREE.Object3D) {
+    this.context?.picking.unregister(obj);
+    this.pickables.delete(obj);
+  }
+  protected releaseAllPickables() {
+    for (const o of this.pickables) this.context?.picking.unregister(o);
+    this.pickables.clear();
+  }
+  describeSelection(_hit: PickHit): Property | null {
+    return null;
+  }
+  selectionBounds(_hit: PickHit, _out: THREE.Box3): boolean {
+    return false;
+  }
+  updateSelection(_hit: PickHit, _prop: Property) {}
   deleteStatus(name: string) {
     this.status.deleteStatus(name);
   }

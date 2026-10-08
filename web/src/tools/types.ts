@@ -10,6 +10,7 @@ import type { ViewportPointerEvent } from '../views/types';
 import type { ViewManager } from '../views/ViewManager';
 import type { BridgeClient } from '../worker/client';
 import type { PickHit } from '../render/picking';
+import type { SelectionManager } from '../app/selection';
 
 /** Services of the 3D view that tools use (rviz RenderPanel / ViewPicker / ViewportProjectionFinder). */
 export interface ViewportServices {
@@ -30,6 +31,8 @@ export interface ViewportServices {
   readonly helpers: THREE.Group;
   /** Last known cursor position over the view, for keyboard actions such as F. */
   lastMouse(): { x: number; y: number };
+  /** Rubber-band rectangle overlay (Select tool); null hides it. */
+  setSelectBox(box: { x: number; y: number; w: number; h: number } | null): void;
 }
 
 export interface ToolContext {
@@ -40,6 +43,7 @@ export interface ToolContext {
   readonly viewport: () => ViewportServices | null;
   /** ROS time for message stamps (frozen while the Time panel is paused). */
   readonly rosTimeNs: Accessor<bigint>;
+  readonly selection: SelectionManager;
   /** Switch back to the default tool (after one-shot tools like SetGoal). */
   readonly revertToDefault: () => void;
 }

@@ -19,6 +19,9 @@ import type { DataMessage } from '../worker/messages';
 import { MARKER_STRIDE, MarkerField, type MarkerArrayMsg } from '../worker/decoders';
 import { InstancedShapes } from '../render/instancedShapes';
 import { TextSprite, UNIT_BOX, UNIT_CONE_Z, UNIT_CYLINDER_Z, UNIT_SPHERE } from '../render/primitives';
+import { boxAround, roQuaternion, roString, roVector, selectionGroup, setQuaternion, setVector } from './selectionInfo';
+import type { PickHit } from '../render/picking';
+import type { Property } from '../property/types';
 import { CloudBuffer, CloudObject } from '../render/pointCloud';
 import type { TfSnapshot } from '../render/tf';
 
@@ -37,6 +40,7 @@ export const MARKER_ARRAY_INFO: DisplayClassInfo = {
 
 const ARROW = 0, CUBE = 1, SPHERE = 2, CYLINDER = 3, LINE_STRIP = 4, LINE_LIST = 5, CUBE_LIST = 6, SPHERE_LIST = 7, POINTS = 8, TEXT_VIEW_FACING = 9, MESH_RESOURCE = 10, TRIANGLE_LIST = 11;
 const DELETE = 2, DELETEALL = 3;
+const MARKER_TYPE_NAMES: Record<number, string> = {  };
 const POOLED = new Set([ARROW, CUBE, SPHERE, CYLINDER, CUBE_LIST, SPHERE_LIST]);
 
 /** One live marker. Numeric fields are read straight from the message arrays. */
@@ -116,6 +120,8 @@ interface MarkerHost {
   tf: TfSnapshot;
   namespaceVisible(ns: string): boolean;
   onNamespace(ns: string): void;
+  makePickable(obj: THREE.Object3D): void;
+  releasePickable(obj: THREE.Object3D): void;
 }
 
 /** Shared rendering/state for Marker and MarkerArray displays. */
@@ -132,6 +138,34 @@ export class MarkerScene {
 
   constructor(private readonly root: THREE.Group, private readonly host: MarkerHost) {
     root.add(this.cubes, this.spheres, this.cylinders, this.cones);
+    for (const pool of [this.cubes, this.spheres, this.cylinders, this.cones]) host.makePickable(pool);
+  }
+
+  /** The marker behind a pick hit: pooled shapes via the instance tag, other markers via their object. */
+  entryForHit(hit: PickHit): { key: string; entry: Entry } | null {
+    const pools = [this.cubes, this.spheres, this.cylinders, this.cones];
+    const pool = pools.find((p) => p === hit.object);
+    const e = pool ? (pool.tagAt(hit.instance) as Entry | undefined) : hit.object ? (hit.object.userData.markerEntry as Entry | undefined) : undefined;
+    if (!e) return null;
+    for (const [key, entry] of this.entries) if (entry === e) return { key, entry };
+    return null;
+  }
+
+  /** Pool slot pose for the highlight box (pooled markers only). */
+  /** First pool slot of a _LIST entry (its points are pushed contiguously). */
+  firstInstanceOf(hit: PickHit, e: Entry): number {
+    const pool = [this.cubes, this.spheres, this.cylinders, this.cones].find((p) => p === hit.object);
+    if (!pool) return -1;
+    let i = hit.instance;
+    while (i > 0 && pool.tagAt(i - 1) === e) i--;
+    return i;
+  }
+
+  instanceBounds(hit: PickHit, out: THREE.Box3): boolean {
+    const pool = [this.cubes, this.spheres, this.cylinders, this.cones].find((p) => p === hit.object);
+    if (!pool || !pool.instanceAt(hit.instance, tmpV, tmpV2)) return false;
+    out.setFromCenterAndSize(tmpV, tmpV2.multiplyScalar(pool === this.cubes ? 1 : 2));
+    return true;
   }
 
   processMarkers(msg: MarkerArrayMsg, nowMs: number) {
@@ -191,11 +225,16 @@ export class MarkerScene {
           // reused in place
         } else {
           if (e.object) {
+            this.host.releasePickable(e.object);
             e.object.removeFromParent();
             disposeObject(e.object);
           }
           e.object = this.buildObject(msg, i, key);
-          if (e.object) this.root.add(e.object);
+          if (e.object) {
+            this.root.add(e.object);
+            e.object.userData.markerEntry = e;
+            if (!(e.object instanceof TextSprite)) this.host.makePickable(e.object);
+          }
         }
       }
     }
@@ -322,6 +361,7 @@ export class MarkerScene {
     const e = this.entries.get(key);
     if (!e) return;
     if (e.object) {
+      this.host.releasePickable(e.object);
       e.object.removeFromParent();
       disposeObject(e.object);
       e.object = null;
@@ -385,13 +425,13 @@ export class MarkerScene {
     const p = e.pos;
     switch (e.type) {
       case CUBE:
-        this.cubes.push(p.x, p.y, p.z, q.x, q.y, q.z, q.w, sx, sy, sz, r, g, b, a);
+        this.cubes.push(p.x, p.y, p.z, q.x, q.y, q.z, q.w, sx, sy, sz, r, g, b, a, e);
         break;
       case SPHERE:
-        this.spheres.push(p.x, p.y, p.z, q.x, q.y, q.z, q.w, sx / 2, sy / 2, sz / 2, r, g, b, a);
+        this.spheres.push(p.x, p.y, p.z, q.x, q.y, q.z, q.w, sx / 2, sy / 2, sz / 2, r, g, b, a, e);
         break;
       case CYLINDER:
-        this.cylinders.push(p.x, p.y, p.z, q.x, q.y, q.z, q.w, sx / 2, sy / 2, sz, r, g, b, a);
+        this.cylinders.push(p.x, p.y, p.z, q.x, q.y, q.z, q.w, sx / 2, sy / 2, sz, r, g, b, a, e);
         break;
       case CUBE_LIST:
       case SPHERE_LIST: {
@@ -408,7 +448,7 @@ export class MarkerScene {
           tmpV.set(pts[po + i * 3], pts[po + i * 3 + 1], pts[po + i * 3 + 2]).applyQuaternion(q).add(p);
           const ci = co + i * 4;
           pool.push(tmpV.x, tmpV.y, tmpV.z, q.x, q.y, q.z, q.w, sx * k, sy * k, sz * k,
-            hasColors ? cols[ci] : r, hasColors ? cols[ci + 1] : g, hasColors ? cols[ci + 2] : b, hasColors ? cols[ci + 3] : a);
+            hasColors ? cols[ci] : r, hasColors ? cols[ci + 1] : g, hasColors ? cols[ci + 2] : b, hasColors ? cols[ci + 3] : a, e);
         }
         break;
       }
@@ -435,9 +475,9 @@ export class MarkerScene {
         const shaftLen = Math.max(0, length - headLen);
         tmpQ.setFromUnitVectors(Z_AXIS, dir);
         const mid = tmpV2.copy(start).addScaledVector(dir, shaftLen / 2);
-        this.cylinders.push(mid.x, mid.y, mid.z, tmpQ.x, tmpQ.y, tmpQ.z, tmpQ.w, shaftD / 2, shaftD / 2, shaftLen, r, g, b, a);
+        this.cylinders.push(mid.x, mid.y, mid.z, tmpQ.x, tmpQ.y, tmpQ.z, tmpQ.w, shaftD / 2, shaftD / 2, shaftLen, r, g, b, a, e);
         const headBase = tmpV2.copy(start).addScaledVector(dir, shaftLen);
-        this.cones.push(headBase.x, headBase.y, headBase.z, tmpQ.x, tmpQ.y, tmpQ.z, tmpQ.w, headD / 2, headD / 2, headLen, r, g, b, a);
+        this.cones.push(headBase.x, headBase.y, headBase.z, tmpQ.x, tmpQ.y, tmpQ.z, tmpQ.w, headD / 2, headD / 2, headLen, r, g, b, a, e);
         break;
       }
     }
@@ -499,7 +539,47 @@ abstract class MarkerDisplayBase extends MessageFilterDisplayBase<DataMessage> {
       tf: this.context!.tf,
       namespaceVisible: (ns) => this.nsProps.get(ns)?.value() ?? true,
       onNamespace: (ns) => this.ensureNamespace(ns),
+      makePickable: (o) => this.makePickable(o),
+      releasePickable: (o) => this.releasePickable(o),
     });
+  }
+
+  override describeSelection(hit: PickHit): Property | null {
+    const found = this.scene?.entryForHit(hit);
+    if (!found) return null;
+    const { key, entry: e } = found;
+    const n = e.msg.numeric;
+    const o = e.o;
+    const g = selectionGroup(`Marker ${key} [${this.name()}]`);
+    roString(g, 'Type', MARKER_TYPE_NAMES[e.type] ?? String(e.type));
+    roString(g, 'Frame', e.frameId);
+    roVector(g, 'Position', e.pos);
+    roQuaternion(g, 'Orientation', e.quat);
+    roVector(g, 'Scale', { x: n[o + MarkerField.Sx], y: n[o + MarkerField.Sx + 1], z: n[o + MarkerField.Sx + 2] });
+    roString(g, 'Color', `${n[o + MarkerField.R].toFixed(3)}; ${n[o + MarkerField.R + 1].toFixed(3)}; ${n[o + MarkerField.R + 2].toFixed(3)}; ${n[o + MarkerField.R + 3].toFixed(3)}`);
+    if (e.type === CUBE_LIST || e.type === SPHERE_LIST) {
+      const first = this.scene!.firstInstanceOf(hit, e);
+      if (first >= 0) roString(g, 'Point', String(hit.instance - first));
+    }
+    return g;
+  }
+  override updateSelection(hit: PickHit, prop: Property) {
+    const found = this.scene?.entryForHit(hit);
+    if (!found) return;
+    setVector(prop.child('Position'), found.entry.pos);
+    setQuaternion(prop.child('Orientation'), found.entry.quat);
+  }
+  override selectionBounds(hit: PickHit, out: THREE.Box3): boolean {
+    if (this.scene?.instanceBounds(hit, out)) return true;
+    const found = this.scene?.entryForHit(hit);
+    if (!found) return false;
+    const e = found.entry;
+    if (e.object) {
+      out.setFromObject(e.object);
+      return !out.isEmpty();
+    }
+    const n = e.msg.numeric;
+    return boxAround(out, e.pos, Math.max(n[e.o + MarkerField.Sx], n[e.o + MarkerField.Sx + 1], n[e.o + MarkerField.Sx + 2]));
   }
 
   private ensureNamespace(ns: string) {

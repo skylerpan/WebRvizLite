@@ -2,9 +2,9 @@ import { createEffect, createRoot, createSignal } from 'solid-js';
 import * as THREE from 'three/webgpu';
 import { getApp } from '../app/store';
 import { ViewportInput } from './input';
-import { enablePerf, measure } from './perf';
+import { enablePerf, measure, measureAsync } from './perf';
 import type { ViewportServices } from '../tools/types';
-import type { PickHit } from './picking';
+import { Picker, type PickHit } from './picking';
 
 /** Status bar text set by the active tool (rviz Tool::setStatus). */
 export const [toolStatus, setToolStatus] = createSignal('');
@@ -37,6 +37,8 @@ export class Viewport implements ViewportServices {
   private readonly ndc = new THREE.Vector2();
   private mouseX = 0;
   private mouseY = 0;
+  private readonly picker: Picker;
+  private readonly selectBox: HTMLDivElement;
   private readonly resizeObserver: ResizeObserver;
   private readonly input: ViewportInput;
   private disposed = false;
@@ -70,6 +72,11 @@ export class Viewport implements ViewportServices {
       return dispose;
     });
 
+    this.picker = new Picker(this.renderer, this.scene, app.manager.picking);
+    this.selectBox = document.createElement('div');
+    this.selectBox.className = 'wrl-select-box';
+    this.selectBox.style.display = 'none';
+    container.appendChild(this.selectBox);
     this.helpers.name = 'tool helpers';
     this.helpers.userData.noPick = true;
     this.scene.add(this.helpers);
@@ -115,6 +122,9 @@ export class Viewport implements ViewportServices {
     // Per-frame work must not allocate; displays update GPU buffers in place (spec §9.7).
     const manager = getApp().manager;
     const t0 = performance.now();
+    // ResizeObserver callbacks are tied to the rendering steps; a tab that was
+    // in the background can miss them, so re-check the size each frame.
+    if (this.container.clientWidth !== this.width || this.container.clientHeight !== this.height) this.resize();
     manager.views.setAspect(this.width / this.height);
     measure('update', () => manager.update(dt));
     measure('render', () => this.renderer.render(this.scene, manager.views.current().camera));
@@ -126,10 +136,11 @@ export class Viewport implements ViewportServices {
   private resize() {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
-    if (w === 0 || h === 0) return;
+    if (w === 0 || h === 0 || (w === this.width && h === this.height)) return;
     this.width = w;
     this.height = h;
     this.renderer.setSize(w, h, false);
+    getApp().manager.views.setAspect(w / h);
   }
 
   // --- ViewportServices (tools) ---------------------------------------------
@@ -153,11 +164,25 @@ export class Viewport implements ViewportServices {
     this.ray(x, y, tmpRay);
     return tmpRay.intersectPlane(GROUND, out) !== null;
   }
-  async pick(_x: number, _y: number, _w: number, _h: number): Promise<PickHit[]> {
-    return [];
+  pick(x: number, y: number, w: number, h: number): Promise<PickHit[]> {
+    this.resize();
+    return measureAsync('pick', () => this.picker.pick(this.camera(), x, y, w, h, this.width, this.height));
   }
-  async pickPoint(_x: number, _y: number): Promise<PickHit | null> {
-    return null;
+  pickPoint(x: number, y: number): Promise<PickHit | null> {
+    this.resize();
+    return measureAsync('pick', () => this.picker.pickPoint(this.camera(), x, y, this.width, this.height));
+  }
+  setSelectBox(box: { x: number; y: number; w: number; h: number } | null) {
+    const el = this.selectBox;
+    if (!box) {
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = 'block';
+    el.style.left = `${Math.min(box.x, box.x + box.w)}px`;
+    el.style.top = `${Math.min(box.y, box.y + box.h)}px`;
+    el.style.width = `${Math.abs(box.w)}px`;
+    el.style.height = `${Math.abs(box.h)}px`;
   }
   setCursor(cursor: 'default' | 'crosshair' | 'move' | 'grab' | 'pointer') {
     this.container.style.cursor = cursor;
@@ -169,6 +194,8 @@ export class Viewport implements ViewportServices {
   dispose() {
     this.disposed = true;
     getApp().manager.tools.attachViewport(null);
+    this.picker.dispose();
+    this.selectBox.remove();
     this.helpers.removeFromParent();
     this.disposeEffects?.();
     this.input.dispose();
