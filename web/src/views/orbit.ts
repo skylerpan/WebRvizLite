@@ -31,7 +31,7 @@ export class OrbitViewController extends ViewControllerBase {
   private dragging = false;
 
   constructor(fixedFrame: () => string, classId = ORBIT_INFO.classId) {
-    super(classId, fixedFrame);
+    super(classId, fixedFrame, 'perspective');
     this.distance = new FloatPropertyImpl('Distance', 10, this, { description: 'Distance from the focal point.', min: 0.001 });
     this.focalShapeSize = new FloatPropertyImpl('Focal Shape Size', 0.05, this, { description: 'Focal shape size.', min: 0.001 });
     this.focalShapeFixedSize = new BoolPropertyImpl('Focal Shape Fixed Size', true, this, { description: 'Focal shape size.' });
@@ -84,7 +84,7 @@ export class OrbitViewController extends ViewControllerBase {
       // rviz2: pitch(-dy * ROTATION_SPEED) -> pitch_property_->add(+dy * ROTATION_SPEED); dragging down raises the camera.
       this.pitch.setValue(this.pitch.value() + e.dy * 0.005, 'user');
     } else if (middle || (left && e.shift)) {
-      const fovY = THREE.MathUtils.degToRad(this.camera.fov);
+      const fovY = THREE.MathUtils.degToRad((this.camera as THREE.PerspectiveCamera).fov);
       const fovX = 2 * Math.atan(Math.tan(fovY / 2) * this.aspect);
       const d = this.distance.value();
       this.pan(-(e.dx / e.width) * d * Math.tan(fovX / 2) * 2, (e.dy / e.height) * d * Math.tan(fovY / 2) * 2);
@@ -124,12 +124,18 @@ export class OrbitViewController extends ViewControllerBase {
     this.focalPoint.setValue({ x: tmpVec.x, y: tmpVec.y, z: tmpVec.z }, 'user');
   }
 
-  /** Reconstructs distance/yaw/pitch from the previous controller's camera (rviz Orbit::mimic). */
+  /**
+   * Reconstructs distance/yaw/pitch from the previous controller's camera
+   * (rviz Orbit::mimic: Distance is copied from another Orbit, otherwise it is
+   * the camera's distance from the origin).
+   */
   mimic(previous: ViewController) {
     const cam = previous.camera;
     const dir = new THREE.Vector3();
     cam.getWorldDirection(dir);
-    const d = this.distance.value();
+    const prevDistance = previous instanceof OrbitViewController ? previous.distance.value() : cam.position.length();
+    const d = Math.max(0.01, prevDistance);
+    this.distance.setValue(d, 'program');
     const focal = cam.position.clone().addScaledVector(dir, d);
     this.focalPoint.setValue({ x: focal.x, y: focal.y, z: focal.z }, 'program');
     const rel = cam.position.clone().sub(focal);

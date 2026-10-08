@@ -31,16 +31,18 @@ export interface ViewContext {
   readonly fixedFrame: Accessor<string>;
 }
 
+export type ViewCamera = THREE.PerspectiveCamera | THREE.OrthographicCamera;
+
 /** A ViewController is a Property subtree (shown in the Views panel) that drives the camera. */
 export interface ViewController extends Property<string> {
   readonly classId: string;
-  readonly camera: THREE.Camera;
+  readonly camera: ViewCamera;
   /** Near Clip Distance, Target Frame, Invert Z Axis, stereo props live here. */
   initialize(ctx: ViewContext): void;
   /** Called every rendered frame: follow the target frame, update the camera. */
   update(dt: number): void;
-  /** Aspect ratio of the viewport changed. */
-  setAspect(aspect: number): void;
+  /** Viewport size in CSS pixels changed (aspect for perspective, extents for orthographic cameras). */
+  setViewportSize(width: number, height: number): void;
   handleMouse(e: ViewportPointerEvent): void;
   /** "Z" key / Zero button. */
   reset(): void;

@@ -6,7 +6,7 @@
 import * as THREE from 'three/webgpu';
 import { BoolPropertyImpl, FloatPropertyImpl, TfFramePropertyImpl, PropertyBase, isYamlMap } from '../property/Property';
 import type { ChangeSource, YamlMap, YamlValue } from '../property/types';
-import type { ViewContext, ViewController, ViewportPointerEvent } from './types';
+import type { ViewCamera, ViewContext, ViewController, ViewportPointerEvent } from './types';
 
 /** rviz formats the view row's value as "Orbit (rviz_default_plugins)". */
 export function formatClassId(classId: string): string {
@@ -16,7 +16,7 @@ export function formatClassId(classId: string): string {
 
 export abstract class ViewControllerBase extends PropertyBase<string> implements ViewController {
   readonly classId: string;
-  readonly camera: THREE.PerspectiveCamera;
+  readonly camera: ViewCamera;
   readonly nearClip: FloatPropertyImpl;
   readonly targetFrame: TfFramePropertyImpl;
   readonly invertZ: BoolPropertyImpl;
@@ -25,12 +25,14 @@ export abstract class ViewControllerBase extends PropertyBase<string> implements
   /** Position of the target frame in the fixed frame; the camera orbits/moves relative to it. */
   protected readonly targetPosition = new THREE.Vector3();
   protected aspect = 1;
+  protected width = 1;
+  protected height = 1;
 
-  constructor(classId: string, fixedFrame: () => string) {
+  constructor(classId: string, fixedFrame: () => string, projection: 'perspective' | 'orthographic' = 'perspective') {
     super('Current View', formatClassId(classId), null, { readOnly: false });
     this.classId = classId;
     this.reservedKeys = new Set(['Class', 'Name']);
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10000);
+    this.camera = projection === 'perspective' ? new THREE.PerspectiveCamera(45, 1, 0.01, 10000) : new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 10000);
     this.camera.up.set(0, 0, 1); // ROS: Z up
     this.nearClip = new FloatPropertyImpl('Near Clip Distance', 0.01, this, {
       description: "Anything closer to the camera than this threshold will not get rendered.",
@@ -68,12 +70,20 @@ export abstract class ViewControllerBase extends PropertyBase<string> implements
     this.updateCamera();
   }
 
-  setAspect(aspect: number) {
-    if (aspect === this.aspect) return;
-    this.aspect = aspect;
-    this.camera.aspect = aspect;
-    this.camera.updateProjectionMatrix();
+  setViewportSize(width: number, height: number) {
+    if (width === this.width && height === this.height) return;
+    this.width = width;
+    this.height = height;
+    this.aspect = width / height;
+    if ((this.camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
+      (this.camera as THREE.PerspectiveCamera).aspect = this.aspect;
+      this.camera.updateProjectionMatrix();
+    }
+    this.onViewportResized();
   }
+
+  /** Orthographic controllers rebuild their projection here. */
+  protected onViewportResized() {}
 
   /** Follows the Target Frame's position (orientation is ignored, as in rviz). */
   update(_dt: number) {

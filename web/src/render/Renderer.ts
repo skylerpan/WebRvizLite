@@ -125,7 +125,7 @@ export class Viewport implements ViewportServices {
     // ResizeObserver callbacks are tied to the rendering steps; a tab that was
     // in the background can miss them, so re-check the size each frame.
     if (this.container.clientWidth !== this.width || this.container.clientHeight !== this.height) this.resize();
-    manager.views.setAspect(this.width / this.height);
+    manager.views.setViewportSize(this.width, this.height);
     measure('update', () => manager.update(dt));
     measure('render', () => this.renderer.render(this.scene, manager.views.current().camera));
     const took = performance.now() - t0;
@@ -140,7 +140,7 @@ export class Viewport implements ViewportServices {
     this.width = w;
     this.height = h;
     this.renderer.setSize(w, h, false);
-    getApp().manager.views.setAspect(w / h);
+    getApp().manager.views.setViewportSize(w, h);
   }
 
   // --- ViewportServices (tools) ---------------------------------------------

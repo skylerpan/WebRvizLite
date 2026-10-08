@@ -6,14 +6,40 @@ import { getApp } from '../app/store';
 
 /**
  * rviz_common/Views: view type selector, Current View property tree, saved
- * views list (Tier 1) and the Save / Remove / Rename / Zero buttons.
+ * views list and the Save / Remove / Rename / Zero buttons.
  */
 export function ViewsPanel(_props: PanelProps) {
   const app = getApp();
   const views = app.manager.views;
-  const [selected, setSelected] = createSignal<Property | null>(null);
+  const [selected, setSelectedRaw] = createSignal<Property | null>(null);
   const splitterRatio = () => app.viewsPanel().splitterRatio;
   const setSplitterRatio = (r: number) => app.setViewsPanel({ ...app.viewsPanel(), splitterRatio: r });
+  const selectedSaved = () => views.savedOf(selected());
+
+  // rviz: clicking a saved view makes a copy of it the current view.
+  const setSelected = (p: Property | null) => {
+    setSelectedRaw(p);
+    const saved = views.savedOf(p);
+    if (saved && p === saved) views.setCurrentFrom(saved);
+  };
+
+  const save = () => {
+    const name = window.prompt('Name for the saved view', views.current().name());
+    if (name !== null && name.trim()) views.saveCurrent(name.trim());
+  };
+  const remove = () => {
+    const v = selectedSaved();
+    if (v) {
+      views.removeSaved(v);
+      setSelectedRaw(null);
+    }
+  };
+  const rename = () => {
+    const v = selectedSaved();
+    if (!v) return;
+    const name = window.prompt('View name', v.name());
+    if (name !== null && name.trim()) views.renameSaved(v, name.trim());
+  };
 
   return (
     <div class="wrl-displays">
@@ -37,11 +63,11 @@ export function ViewsPanel(_props: PanelProps) {
         selected={selected}
         onSelect={setSelected}
       />
-      <div class="wrl-help wrl-dim" style={{ height: '40px' }}>{selected()?.description ?? 'Saved views are a Tier 1 feature.'}</div>
+      <div class="wrl-help wrl-dim" style={{ height: '40px' }}>{selected()?.description ?? 'Save keeps the current view in the list below; click a saved view to switch to it.'}</div>
       <div class="wrl-displays-buttons">
-        <button type="button" disabled title="Tier 1">Save</button>
-        <button type="button" disabled title="Tier 1">Remove</button>
-        <button type="button" disabled title="Tier 1">Rename</button>
+        <button type="button" onClick={save} title="Save the current view">Save</button>
+        <button type="button" disabled={!selectedSaved()} onClick={remove} title="Remove the selected saved view">Remove</button>
+        <button type="button" disabled={!selectedSaved()} onClick={rename} title="Rename the selected saved view">Rename</button>
       </div>
     </div>
   );

@@ -21,7 +21,7 @@ function makeOrbit(): OrbitViewController {
   const v = new OrbitViewController(() => 'map');
   const tf = { lookup: () => null } as unknown as TfSnapshot;
   v.initialize({ tf, fixedFrame: () => 'map' });
-  v.setAspect(800 / 600);
+  v.setViewportSize(800, 600);
   v.handleMouse(ev({ type: 'down', button: 0, buttons: 1 }));
   return v;
 }
