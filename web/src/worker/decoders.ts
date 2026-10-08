@@ -4,7 +4,7 @@
  * header (spec §3: the main thread never sees message objects).
  */
 
-import { decodeString, type TfBuffer } from '../wasm/pkg/webrvizlite';
+import { ImageConverter, decodeCameraInfo, decodeString, type TfBuffer } from '../wasm/pkg/webrvizlite';
 import type { Subscription } from './worker';
 
 export interface DecodeResult {
@@ -147,6 +147,39 @@ registerDecoder('range', (_sub, payload, tf, fixedFrame) => {
   const data: RangeMsg = { count: 1, positions: r.positions, orientations: r.orientations, range: r.range, fieldOfView: r.field_of_view, minRange: r.min_range, maxRange: r.max_range };
   return { meta: { stampNs: Number(r.stamp_ns), frameId: r.frame_id, ...tfMeta(r.tf_status, r.frame_id, fixedFrame) }, data, transfer: [r.positions.buffer, r.orientations.buffer] };
 });
+/** RGBA8 frame for the Image / Camera panels (the buffer is transferred). */
+export interface ImageMsg {
+  width: number;
+  height: number;
+  encoding: string;
+  rgba: Uint8Array;
+}
+
+export interface CameraInfoMsg {
+  width: number;
+  height: number;
+  /** 3×3 row-major intrinsics. */
+  k: Float64Array;
+  /** 3×4 projection. */
+  p: Float64Array;
+  binningX: number;
+  binningY: number;
+  /** x_offset, y_offset, height, width */
+  roi: Uint32Array;
+}
+
+registerDecoder('image', (sub, payload) => {
+  sub.imageConverter ??= new ImageConverter();
+  const img = sub.imageConverter.convert(payload, JSON.stringify(sub.options.image ?? {}));
+  const data: ImageMsg = { width: img.width, height: img.height, encoding: img.encoding, rgba: img.rgba };
+  return { meta: { stampNs: Number(img.stamp_ns), frameId: img.frame_id, inFixedFrame: false, tfError: null }, data, transfer: [img.rgba.buffer] };
+});
+registerDecoder('camera_info', (_sub, payload) => {
+  const c = decodeCameraInfo(payload);
+  const data: CameraInfoMsg = { width: c.width, height: c.height, k: c.k, p: c.p, binningX: c.binning_x, binningY: c.binning_y, roi: c.roi };
+  return { meta: { stampNs: Number(c.stamp_ns), frameId: c.frame_id, inFixedFrame: false, tfError: null }, data, transfer: [c.k.buffer, c.p.buffer, c.roi.buffer] };
+});
+
 registerDecoder('string', (_sub, payload) => ({ meta: { stampNs: 0, frameId: '', inFixedFrame: true, tfError: null }, data: { text: decodeString(payload) }, transfer: [] }));
 
 registerDecoder('path', (_sub, payload, tf, fixedFrame) => posesResult(tf.decodePath(payload, fixedFrame), fixedFrame));

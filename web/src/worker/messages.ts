@@ -54,7 +54,9 @@ export type Decoder =
   | 'polygon'
   | 'grid_cells'
   | 'range'
-  | 'string';
+  | 'string'
+  | 'image'
+  | 'camera_info';
 
 /** Per-subscription receive statistics, reported by the worker on request. */
 export interface SubscriptionStats {

@@ -11,7 +11,7 @@ import type { Rgb, YamlMap, YamlValue } from '../property/types';
 import type { BridgeClient } from '../worker/client';
 import { DisplayGroupImpl } from './Display';
 import { createDisplayRegistry } from './registry';
-import type { DisplayContext, DisplayRegistry } from './types';
+import type { DisplayContext, DisplayRegistry, ExtraView, PanelHost } from './types';
 import { ViewManager } from '../views/ViewManager';
 import { ToolManager } from '../tools/ToolManager';
 import { PickRegistry } from '../render/picking';
@@ -78,6 +78,8 @@ export class VisualizationManager {
   readonly tools: ToolManager;
   readonly picking = new PickRegistry();
   readonly selection = new SelectionManager();
+  readonly extraViews = new Set<ExtraView>();
+  private panelHost: PanelHost | null = null;
   /** ROS time from the server clock, ns (frozen while the Time panel is paused). */
   readonly rosTimeNs: Accessor<bigint>;
   readonly time: TimeState;
@@ -106,7 +108,10 @@ export class VisualizationManager {
 
     this.time = new TimeState(bridge);
     this.rosTimeNs = this.time.rosTimeNs;
-    this.context = { scene, bridge, fixedFrame, tf: bridge.tf, rosTimeNs: this.rosTimeNs, picking: this.picking };
+    this.context = {
+      scene, bridge, fixedFrame, tf: bridge.tf, rosTimeNs: this.rosTimeNs, picking: this.picking,
+      panels: () => this.panelHost, rootDisplays: () => this.root.displays(), extraViews: this.extraViews,
+    };
     scene.add(this.selection.highlight);
 
     this.views = new ViewManager({ tf: bridge.tf, fixedFrame });
@@ -142,6 +147,11 @@ export class VisualizationManager {
     if (tf.frames().length === 0) this.globalStatus.setStatus('warn', 'Fixed Frame', 'No tf data.  Actual error: Frame [' + frame + '] does not exist');
     else if (!tf.has(frame)) this.globalStatus.setStatus('error', 'Fixed Frame', `Frame [${frame}] does not exist`);
     else this.globalStatus.setStatus('ok', 'Fixed Frame', 'OK');
+  }
+
+  /** The dockview layout, once mounted (displays open their panels through it). */
+  setPanelHost(host: PanelHost | null) {
+    this.panelHost = host;
   }
 
   background(): Rgb {

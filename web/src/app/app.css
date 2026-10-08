@@ -195,3 +195,7 @@ select.wrl-edit { background: #1e1e1e; }
 .wrl-add-tool-list button:hover { background: #444; }
 
 .wrl-select-box { position: absolute; pointer-events: none; border: 1px solid #ffd866; background: rgba(255, 216, 102, 0.15); z-index: 5; }
+
+.wrl-image-panel, .wrl-camera-panel { width: 100%; height: 100%; background: #111; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.wrl-image-panel canvas { width: 100%; height: 100%; object-fit: contain; image-rendering: auto; }
+.wrl-camera-panel canvas { display: block; }

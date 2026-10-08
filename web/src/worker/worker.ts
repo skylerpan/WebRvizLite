@@ -5,7 +5,7 @@
 // Compiled against the DOM lib for simplicity; everything used here
 // (WebSocket, postMessage, location) exists in both DOM and worker scopes.
 
-import init, { TfBuffer, pointInfoJson, version } from '../wasm/pkg/webrvizlite';
+import init, { ImageConverter, TfBuffer, pointInfoJson, version } from '../wasm/pkg/webrvizlite';
 import type { Decoder, Hello, MainToWorker, QosProfile, SubscriptionStats, WorkerToMain } from './messages';
 import { decodeMessage } from './decoders';
 
@@ -37,6 +37,8 @@ export interface Subscription {
   error: string | null;
   /** Latest payload, kept when the subscription is selectable (point channel lookups). */
   lastPayload?: Uint8Array;
+  /** Depth normalisation history for Image subscriptions. */
+  imageConverter?: ImageConverter;
   recent: Array<[number, number]>;
 }
 

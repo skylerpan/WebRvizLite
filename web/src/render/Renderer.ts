@@ -128,6 +128,7 @@ export class Viewport implements ViewportServices {
     manager.views.setViewportSize(this.width, this.height);
     measure('update', () => manager.update(dt));
     measure('render', () => this.renderer.render(this.scene, manager.views.current().camera));
+    for (const v of manager.extraViews) measure('camera view', () => v.render());
     const took = performance.now() - t0;
     if (took > 16) setLongFrames(longFrames() + 1);
     if (took > worstFrameMs()) setWorstFrameMs(Math.round(took * 10) / 10);

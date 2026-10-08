@@ -12,6 +12,7 @@ extern crate alloc;
 
 pub mod cdr;
 pub mod covariance;
+pub mod image;
 pub mod math;
 pub mod msgs;
 pub mod pointcloud;

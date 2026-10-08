@@ -7,6 +7,8 @@ import { ToolPropertiesPanel } from '../panels/ToolPropertiesPanel';
 import { SelectionPanel } from '../panels/SelectionPanel';
 import { View3DPanel } from '../render/View3DPanel';
 import { DebugPanel } from '../panels/DebugPanel';
+import { ImagePanel } from '../panels/ImagePanel';
+import { CameraPanel } from '../panels/CameraPanel';
 import type { YamlMap } from '../property/types';
 
 /**
@@ -23,7 +25,18 @@ const PANELS: Record<string, () => IContentRenderer> = {
   selection: () => solidPanel(SelectionPanel, 'wrl-panel wrl-panel-flush'),
   time: () => solidPanel(TimePanel),
   debug: () => solidPanel(DebugPanel),
+  image: () => new ImagePanel(),
+  camera: () => new CameraPanel(),
 };
+
+/** Panels owned by displays; recreated by their display, never restored from the layout JSON. */
+const DISPLAY_PANEL_COMPONENTS = new Set(['image', 'camera']);
+
+let rebuilding = false;
+/** True while the layout is being rebuilt: display panels closed now are reopened by their display, not a user action. */
+export function isLayoutRebuilding() {
+  return rebuilding;
+}
 
 export function registerPanelComponent(name: string, factory: () => IContentRenderer) {
   PANELS[name] = factory;
@@ -129,6 +142,15 @@ export function createLayout(container: HTMLElement, opts: LayoutOptions = {}): 
   };
 
   const buildDefault = (panels: YamlMap[] | null) => {
+    rebuilding = true;
+    try {
+      buildDefaultInner(panels);
+    } finally {
+      rebuilding = false;
+    }
+  };
+
+  const buildDefaultInner = (panels: YamlMap[] | null) => {
     clear();
     api.addPanel({ id: 'view3d', component: 'view3d', title: '3D View' });
     lockCentre();
@@ -163,15 +185,19 @@ export function createLayout(container: HTMLElement, opts: LayoutOptions = {}): 
     },
     restore(json) {
       if (!json || typeof json !== 'object') return false;
+      rebuilding = true;
       try {
         api.fromJSON(json as SerializedDockview);
         if (!lockCentre()) throw new Error('layout has no 3D view');
+        for (const p of api.panels.slice()) if (DISPLAY_PANEL_COMPONENTS.has(p.api.component)) api.removePanel(p);
         if (opts.debug) addPanel('debug');
         return true;
       } catch (e) {
         console.warn('[layout] could not restore the saved layout, using the default:', e);
-        buildDefault(null);
+        buildDefaultInner(null);
         return false;
+      } finally {
+        rebuilding = false;
       }
     },
     openPanels() {
@@ -183,7 +209,9 @@ export function createLayout(container: HTMLElement, opts: LayoutOptions = {}): 
         existing.api.setActive();
         return;
       }
-      const panel = api.addPanel({ id, component, title, floating: { width: sz?.width ?? 480, height: sz?.height ?? 360, position: { left: 80, top: 80 } } });
+      // Cascade new floating panels so several Image / Camera panels do not stack exactly.
+      const n = api.panels.filter((p) => DISPLAY_PANEL_COMPONENTS.has(p.api.component)).length;
+      const panel = api.addPanel({ id, component, title, floating: { width: sz?.width ?? 480, height: sz?.height ?? 360, position: { left: 80 + n * 40, top: 80 + n * 40 } } });
       panel.api.setActive();
     },
     closePanel(id) {

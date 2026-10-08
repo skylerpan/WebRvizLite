@@ -32,7 +32,7 @@ from nav_msgs.msg import GridCells, OccupancyGrid, Odometry, Path
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rosgraph_msgs.msg import Clock
-from sensor_msgs.msg import LaserScan, PointCloud2, PointField, Range
+from sensor_msgs.msg import CameraInfo, Image, LaserScan, PointCloud2, PointField, Range
 from std_msgs.msg import ColorRGBA, String
 from tf2_msgs.msg import TFMessage
 from visualization_msgs.msg import Marker, MarkerArray
@@ -125,6 +125,9 @@ class MockScene(Node):
         self.grid_cells_pub = self.create_publisher(GridCells, '/grid_cells', 2)
         self.range_pub = self.create_publisher(Range, '/range', 10)
         self.urdf_pub = self.create_publisher(String, '/robot_description', latched)
+        self.image_pub = self.create_publisher(Image, '/camera/image_raw', sensor_qos)
+        self.depth_pub = self.create_publisher(Image, '/camera/depth/image_raw', sensor_qos)
+        self.camera_info_pub = self.create_publisher(CameraInfo, '/camera/camera_info', 2)
 
         self.n_points = int(math.sqrt(n_points)) ** 2
         self.n_cubes = n_cubes
@@ -161,6 +164,7 @@ class MockScene(Node):
         self.create_timer(0.2, self.publish_footprint)
         self.create_timer(0.5, self.publish_point)
         self.create_timer(1.0, self.publish_covariance_and_cells)
+        self.create_timer(0.2, self.publish_camera)
         self.get_logger().info(
             f'publishing mock scene: /points {self.n_points} pts, /markers {n_cubes} cubes, /livox/lidar {n_livox} pts')
 
@@ -395,6 +399,74 @@ class MockScene(Node):
                 if r0 <= d < r0 + 0.25:
                     g.cells.append(Point32(x=cx, y=cy, z=0.0))
         self.grid_cells_pub.publish(g)
+
+    CAM_W, CAM_H, CAM_F = 160, 120, 120.0
+
+    def publish_camera(self):
+        """Ray-casts the room from base_link + (0.28, 0, 0.4) looking along +x (see mock.rs)."""
+        stamp = self.now()
+        x, y, yaw = self.pose()
+        W, H, F = self.CAM_W, self.CAM_H, self.CAM_F
+        cam_x, cam_y, cam_z = x + 0.28 * math.cos(yaw), y + 0.28 * math.sin(yaw), 0.4
+        u = (np.arange(W)[None, :] + 0.5 - W / 2) / F
+        v = (np.arange(H)[:, None] + 0.5 - H / 2) / F
+        norm = np.sqrt(u * u + v * v + 1.0)
+        fwd, left, up = 1.0 / norm, -u / norm, -v / norm
+        wx = fwd * math.cos(yaw) - left * math.sin(yaw)
+        wy = fwd * math.sin(yaw) + left * math.cos(yaw)
+        wz = up * np.ones_like(wx)
+        t = np.full((H, W), np.inf)
+        rgb = np.zeros((H, W, 3), np.uint8)
+        rgb[:] = (40, 40, 48)
+        floor = wz < -1e-6
+        tf_ = np.where(floor, -cam_z / np.where(floor, wz, 1.0), np.inf)
+        hx, hy = cam_x + wx * tf_, cam_y + wy * tf_
+        check = ((np.floor(hx) + np.floor(hy)) % 2) == 0
+        t = np.where(floor, tf_, t)
+        rgb[floor & check] = (200, 200, 200)
+        rgb[floor & ~check] = (150, 150, 160)
+        ceil = wz > 1e-6
+        t = np.where(ceil, (ROOM_CEILING - cam_z) / np.where(ceil, wz, 1.0), t)
+        rgb[ceil] = (70, 70, 80)
+        horiz = np.sqrt(wx * wx + wy * wy)
+        dist = ray_to_walls(cam_x, cam_y, np.arctan2(wy, wx))
+        tw = dist / np.maximum(horiz, 1e-9)
+        wall = tw < t
+        hx, hy = cam_x + wx * tw, cam_y + wy * tw
+        stripe = (np.floor((hx + hy) * 2.0) % 2) == 0
+        t = np.where(wall, tw, t)
+        rgb[wall & stripe] = (120, 150, 200)
+        rgb[wall & ~stripe] = (90, 110, 160)
+        px, py, pr = 2.5, -1.5, 0.3
+        ox, oy = cam_x - px, cam_y - py
+        b = ox * wx + oy * wy
+        c = ox * ox + oy * oy - pr * pr
+        disc = b * b - c * horiz * horiz
+        with np.errstate(invalid='ignore'):
+            tp = (-b - np.sqrt(np.where(disc > 0, disc, 0))) / np.maximum(horiz * horiz, 1e-12)
+        hit = (disc > 0) & (tp > 0) & (tp < t) & (cam_z + wz * tp <= 1.2)
+        t = np.where(hit, tp, t)
+        rgb[hit] = (200, 90, 60)
+        depth_mm = np.where(np.isfinite(t), np.minimum(t * fwd * 1000.0, 65535.0), 0).astype(np.uint16)
+
+        img = Image()
+        img.header.stamp, img.header.frame_id = stamp, 'camera_optical_frame'
+        img.height, img.width, img.encoding, img.is_bigendian, img.step = H, W, 'rgb8', 0, W * 3
+        img.data = rgb.tobytes()
+        self.image_pub.publish(img)
+        dep = Image()
+        dep.header.stamp, dep.header.frame_id = stamp, 'camera_optical_frame'
+        dep.height, dep.width, dep.encoding, dep.is_bigendian, dep.step = H, W, '16UC1', 0, W * 2
+        dep.data = depth_mm.astype('<u2').tobytes()
+        self.depth_pub.publish(dep)
+        ci = CameraInfo()
+        ci.header.stamp, ci.header.frame_id = stamp, 'camera_optical_frame'
+        ci.height, ci.width, ci.distortion_model = H, W, 'plumb_bob'
+        ci.d = [0.0] * 5
+        ci.k = [F, 0.0, W / 2, 0.0, F, H / 2, 0.0, 0.0, 1.0]
+        ci.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        ci.p = [F, 0.0, W / 2, 0.0, 0.0, F, H / 2, 0.0, 0.0, 0.0, 1.0, 0.0]
+        self.camera_info_pub.publish(ci)
 
     # ---- 1 Hz: markers ------------------------------------------------------
 

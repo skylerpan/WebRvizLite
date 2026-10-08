@@ -6,6 +6,7 @@
 
 use wasm_bindgen::prelude::*;
 use webrvizlite_core::covariance;
+use webrvizlite_core::image;
 use webrvizlite_core::math::Transform;
 use webrvizlite_core::msgs;
 use webrvizlite_core::pointcloud::{self, ColorOptions, Transformer};
@@ -447,6 +448,113 @@ fn points_in_fixed_frame(tf: &Transform, xyz: &[f32]) -> Vec<f32> {
         out.extend(q.iter().map(|v| *v as f32));
     }
     out
+}
+
+/// RGBA8 conversion of one sensor_msgs/Image for an Image / Camera display.
+#[wasm_bindgen(getter_with_clone)]
+pub struct ImageData {
+    pub frame_id: String,
+    pub stamp_ns: u64,
+    pub width: u32,
+    pub height: u32,
+    pub encoding: String,
+    pub rgba: Vec<u8>,
+}
+
+/// Per-subscription image converter (keeps the depth normalisation history).
+#[wasm_bindgen]
+#[derive(Default)]
+pub struct ImageConverter {
+    state: image::ImageNormalizer,
+}
+
+#[derive(serde::Deserialize)]
+struct ImageOptionsJson {
+    #[serde(default = "default_true")]
+    normalize: bool,
+    #[serde(default)]
+    min: f32,
+    #[serde(default = "one_f32")]
+    max: f32,
+    #[serde(default = "five")]
+    median_window: usize,
+}
+fn default_true() -> bool {
+    true
+}
+fn one_f32() -> f32 {
+    1.0
+}
+fn five() -> usize {
+    5
+}
+
+#[wasm_bindgen]
+impl ImageConverter {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> ImageConverter {
+        ImageConverter::default()
+    }
+
+    /// `options_json`: `{normalize, min, max, median_window}` (Image display properties).
+    pub fn convert(&mut self, bytes: &[u8], options_json: &str) -> Result<ImageData, JsError> {
+        let img = msgs::sensor::decode_image(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+        let o: ImageOptionsJson = serde_json::from_str(options_json).unwrap_or(ImageOptionsJson {
+            normalize: true,
+            min: 0.0,
+            max: 1.0,
+            median_window: 5,
+        });
+        let opts = image::DepthOptions {
+            normalize: o.normalize,
+            min: o.min,
+            max: o.max,
+            median_window: o.median_window,
+        };
+        let mut rgba = Vec::new();
+        image::to_rgba8(&img, &opts, &mut self.state, &mut rgba).map_err(|e| JsError::new(&e))?;
+        Ok(ImageData {
+            frame_id: img.header.frame_id,
+            stamp_ns: img.header.stamp.to_ns(),
+            width: img.width,
+            height: img.height,
+            encoding: img.encoding,
+            rgba,
+        })
+    }
+}
+
+/// Camera intrinsics for the Camera display.
+#[wasm_bindgen(getter_with_clone)]
+pub struct CameraInfoData {
+    pub frame_id: String,
+    pub stamp_ns: u64,
+    pub width: u32,
+    pub height: u32,
+    pub k: Vec<f64>,
+    pub p: Vec<f64>,
+    pub d: Vec<f64>,
+    pub binning_x: u32,
+    pub binning_y: u32,
+    /// x_offset, y_offset, height, width
+    pub roi: Vec<u32>,
+}
+
+#[wasm_bindgen(js_name = decodeCameraInfo)]
+pub fn decode_camera_info(bytes: &[u8]) -> Result<CameraInfoData, JsError> {
+    let c = msgs::sensor::decode_camera_info(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+    Ok(CameraInfoData {
+        frame_id: c.header.frame_id,
+        stamp_ns: c.header.stamp.to_ns(),
+        width: c.width,
+        height: c.height,
+        k: c.k.to_vec(),
+        p: c.p.to_vec(),
+        d: c.d,
+        binning_x: c.binning_x,
+        binning_y: c.binning_y,
+        roi: c.roi.to_vec(),
+    })
 }
 
 /// std_msgs/String payload (robot_description).

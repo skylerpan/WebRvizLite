@@ -68,7 +68,10 @@ export class AppStore {
     this.setTimePanel = setTime;
     const [layout, setLayout] = createSignal<Layout | null>(null);
     this.layout = layout;
-    this.setLayout = setLayout;
+    this.setLayout = (l) => {
+      setLayout(l);
+      this.manager.setPanelHost(l);
+    };
     const [name, setName] = createSignal('default.rviz');
     this.configName = name;
     this.setConfigName = setName;
@@ -87,6 +90,8 @@ export class AppStore {
   loadConfigText(text: string, name: string) {
     const cfg = RvizConfig.parse(text);
     this.config = cfg;
+    // Layout first: rebuilding it later would close the panels Image / Camera displays open on load.
+    this.applyLayoutFromConfig();
     if (cfg.visualizationManager !== undefined) this.manager.load(cfg.visualizationManager);
     this.setDisplaysPanel(cfg.displaysPanelState());
     this.setViewsPanel(cfg.treePanelState('rviz_common/Views', ['/Current View1']));
@@ -100,7 +105,6 @@ export class AppStore {
     this.selection.clear();
     this.manager.time.setPaused(false);
     document.title = `${name} - WebRvizLite`;
-    this.applyLayoutFromConfig();
   }
 
   /**

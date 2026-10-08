@@ -64,6 +64,15 @@ pub const GRID_CELLS_TOPIC: &str = "/grid_cells";
 pub const GRID_CELLS_TYPE: &str = "nav_msgs/msg/GridCells";
 pub const RANGE_TOPIC: &str = "/range";
 pub const RANGE_TYPE: &str = "sensor_msgs/msg/Range";
+pub const IMAGE_TOPIC: &str = "/camera/image_raw";
+pub const DEPTH_TOPIC: &str = "/camera/depth/image_raw";
+pub const IMAGE_TYPE: &str = "sensor_msgs/msg/Image";
+pub const CAMERA_INFO_TOPIC: &str = "/camera/camera_info";
+pub const CAMERA_INFO_TYPE: &str = "sensor_msgs/msg/CameraInfo";
+/// Synthetic camera: 160 × 120, fx = fy = 120, principal point at the centre.
+pub const CAM_W: usize = 160;
+pub const CAM_H: usize = 120;
+pub const CAM_F: f64 = 120.0;
 pub const ROBOT_DESCRIPTION_TOPIC: &str = "/robot_description";
 pub const STRING_TYPE: &str = "std_msgs/msg/String";
 /// URDF published on /robot_description (meshes resolve through `package://webrvizlite_fixtures/`).
@@ -126,6 +135,9 @@ impl MockTransport {
         channels.insert(GRID_CELLS_TOPIC, mk(GRID_CELLS_TYPE, 2));
         channels.insert(RANGE_TOPIC, mk(RANGE_TYPE, 4));
         channels.insert(ROBOT_DESCRIPTION_TOPIC, mk(STRING_TYPE, 1));
+        channels.insert(IMAGE_TOPIC, mk(IMAGE_TYPE, 2));
+        channels.insert(DEPTH_TOPIC, mk(IMAGE_TYPE, 2));
+        channels.insert(CAMERA_INFO_TOPIC, mk(CAMERA_INFO_TYPE, 2));
         let this = Arc::new(Self {
             channels,
             published: Mutex::new(HashMap::new()),
@@ -191,6 +203,21 @@ impl MockTransport {
                 if phase.is_multiple_of(10) {
                     t.channel(POINT_TOPIC)
                         .send(encode_point_stamped(stamp, pose, phase));
+                }
+                if phase.is_multiple_of(4)
+                    && t.channel(IMAGE_TOPIC).tx.receiver_count()
+                        + t.channel(DEPTH_TOPIC).tx.receiver_count()
+                        > 0
+                {
+                    let (rgb, depth) =
+                        tokio::task::spawn_blocking(move || encode_camera_images(stamp, pose))
+                            .await
+                            .unwrap_or_default();
+                    t.channel(IMAGE_TOPIC).send(rgb);
+                    t.channel(DEPTH_TOPIC).send(depth);
+                }
+                if phase.is_multiple_of(4) {
+                    t.channel(CAMERA_INFO_TOPIC).send(encode_camera_info(stamp));
                 }
             }
         });
@@ -459,6 +486,123 @@ fn encode_tf(stamp: Stamp, pose: Pose2D) -> Vec<u8> {
         [pose.x, pose.y, 0.0],
         yaw_quat(pose.yaw),
     );
+    w.finish()
+}
+
+/// sensor_msgs/CameraInfo for the synthetic camera (plumb_bob, no distortion).
+fn encode_camera_info(stamp: Stamp) -> Vec<u8> {
+    let mut w = Writer::with_capacity(400);
+    header(&mut w, stamp, "camera_optical_frame");
+    w.u32(CAM_H as u32).u32(CAM_W as u32).string("plumb_bob");
+    w.seq_len(5);
+    for _ in 0..5 {
+        w.f64(0.0);
+    }
+    let (cx, cy) = (CAM_W as f64 / 2.0, CAM_H as f64 / 2.0);
+    for v in [CAM_F, 0.0, cx, 0.0, CAM_F, cy, 0.0, 0.0, 1.0] {
+        w.f64(v);
+    }
+    for i in 0..9 {
+        w.f64(if i % 4 == 0 { 1.0 } else { 0.0 });
+    }
+    for v in [CAM_F, 0.0, cx, 0.0, 0.0, CAM_F, cy, 0.0, 0.0, 0.0, 1.0, 0.0] {
+        w.f64(v);
+    }
+    w.u32(0).u32(0).u32(0).u32(0).u32(0).u32(0).bool(false);
+    w.finish()
+}
+
+/// Ray-casts the room from the robot's camera (base_link + (0.28, 0, 0.4), looking
+/// along +x): an rgb8 colour image (walls, chequered floor, ceiling, the map pillar)
+/// and a 16UC1 depth image in millimetres. Same intrinsics as `encode_camera_info`.
+fn encode_camera_images(stamp: Stamp, robot: Pose2D) -> (Vec<u8>, Vec<u8>) {
+    let (cx, cy) = (CAM_W as f64 / 2.0, CAM_H as f64 / 2.0);
+    let cam_x = robot.x + 0.28 * robot.yaw.cos();
+    let cam_y = robot.y + 0.28 * robot.yaw.sin();
+    let cam_z = 0.4;
+    let mut rgb = vec![0u8; CAM_W * CAM_H * 3];
+    let mut depth = vec![0u8; CAM_W * CAM_H * 2];
+    for v in 0..CAM_H {
+        for u in 0..CAM_W {
+            // Optical frame: x right, y down, z forward → camera_link: x fwd, y left, z up.
+            let dx_o = (u as f64 + 0.5 - cx) / CAM_F;
+            let dy_o = (v as f64 + 0.5 - cy) / CAM_F;
+            let norm = (dx_o * dx_o + dy_o * dy_o + 1.0).sqrt();
+            let (fwd, left, up) = (1.0 / norm, -dx_o / norm, -dy_o / norm);
+            let wx = fwd * robot.yaw.cos() - left * robot.yaw.sin();
+            let wy = fwd * robot.yaw.sin() + left * robot.yaw.cos();
+            let wz = up;
+            // Candidate hits: floor (z = 0), ceiling, walls, pillar.
+            let mut t = f64::INFINITY;
+            let mut color = [40u8, 40, 48];
+            if wz < -1e-6 {
+                let tf = -cam_z / wz;
+                let (hx, hy) = (cam_x + wx * tf, cam_y + wy * tf);
+                let check = ((hx.floor() as i64 + hy.floor() as i64) & 1) == 0;
+                t = tf;
+                color = if check {
+                    [200, 200, 200]
+                } else {
+                    [150, 150, 160]
+                };
+            } else if wz > 1e-6 {
+                t = (ROOM_CEILING - cam_z) / wz;
+                color = [70, 70, 80];
+            }
+            let horiz = (wx * wx + wy * wy).sqrt();
+            if horiz > 1e-9 {
+                let dist = ray_to_walls(cam_x, cam_y, wy.atan2(wx));
+                let tw = dist / horiz;
+                if tw < t {
+                    t = tw;
+                    let (hx, hy) = (cam_x + wx * tw, cam_y + wy * tw);
+                    let stripe = (((hx + hy) * 2.0).floor() as i64 & 1) == 0;
+                    color = if stripe {
+                        [120, 150, 200]
+                    } else {
+                        [90, 110, 160]
+                    };
+                }
+                // pillar at (2.5, -1.5), r 0.3, 1.2 m tall
+                let (px, py, pr) = (2.5, -1.5, 0.3);
+                let (ox, oy) = (cam_x - px, cam_y - py);
+                let b = ox * wx + oy * wy;
+                let c = ox * ox + oy * oy - pr * pr;
+                let disc = b * b - c * horiz * horiz;
+                if disc > 0.0 {
+                    let tp = (-b - disc.sqrt()) / (horiz * horiz);
+                    if tp > 0.0 && tp < t && cam_z + wz * tp <= 1.2 {
+                        t = tp;
+                        color = [200, 90, 60];
+                    }
+                }
+            }
+            let i = v * CAM_W + u;
+            rgb[i * 3..i * 3 + 3].copy_from_slice(&color);
+            // Depth along the optical axis (z), in mm; 0 = no return.
+            let z_mm = if t.is_finite() {
+                (t * fwd * 1000.0).min(65535.0) as u16
+            } else {
+                0
+            };
+            depth[i * 2..i * 2 + 2].copy_from_slice(&z_mm.to_le_bytes());
+        }
+    }
+    (
+        encode_image(stamp, "rgb8", 3, &rgb),
+        encode_image(stamp, "16UC1", 2, &depth),
+    )
+}
+
+fn encode_image(stamp: Stamp, encoding: &str, bpp: usize, data: &[u8]) -> Vec<u8> {
+    let mut w = Writer::with_capacity(data.len() + 64);
+    header(&mut w, stamp, "camera_optical_frame");
+    w.u32(CAM_H as u32)
+        .u32(CAM_W as u32)
+        .string(encoding)
+        .u8(0)
+        .u32((CAM_W * bpp) as u32);
+    w.seq_len(data.len()).bytes(data);
     w.finish()
 }
 
@@ -1343,6 +1487,20 @@ mod tests {
         assert!(g.cells.len() > 30 && g.cell_width == 0.1);
         let r = sensor::decode_range(&encode_range(now_stamp(), pose)).unwrap();
         assert!(r.range > 0.0 && r.range <= 4.0);
+        let (rgb, depth) = encode_camera_images(now_stamp(), pose);
+        let img = sensor::decode_image(&rgb).unwrap();
+        assert_eq!(
+            (
+                img.width as usize,
+                img.height as usize,
+                img.encoding.as_str()
+            ),
+            (CAM_W, CAM_H, "rgb8")
+        );
+        let d = sensor::decode_image(&depth).unwrap();
+        assert_eq!((d.encoding.as_str(), d.step as usize), ("16UC1", CAM_W * 2));
+        let ci = sensor::decode_camera_info(&encode_camera_info(now_stamp())).unwrap();
+        assert_eq!(ci.k[0], CAM_F);
     }
 
     #[test]

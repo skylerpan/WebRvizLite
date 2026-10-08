@@ -28,6 +28,22 @@ export interface DisplayContext {
   readonly rosTimeNs: Accessor<bigint>;
   /** Pick-id registry for selectable objects (spec §7.3). */
   readonly picking: PickRegistry;
+  /** Dock panels owned by displays (Image / Camera); null until the main window is mounted. */
+  readonly panels: () => PanelHost | null;
+  /** Top-level displays (Camera display Visibility list). */
+  readonly rootDisplays: Accessor<readonly Display[]>;
+  /** Extra render passes run after the main view each frame (Camera display panels). */
+  readonly extraViews: Set<ExtraView>;
+}
+
+export interface PanelHost {
+  openDisplayPanel(id: string, component: string, title: string, size?: { width: number; height: number }): void;
+  closePanel(id: string): void;
+  setPanelTitle(id: string, title: string): void;
+}
+
+export interface ExtraView {
+  render(): void;
 }
 
 /** Registry metadata, matching plugins_description.xml. */
