@@ -5,7 +5,7 @@ import { MenuButton, type MenuItem } from './Menu';
 import { AddDisplayDialog } from '../panels/AddDisplayDialog';
 import { hasFileSystemAccess, openConfig, openRecent, recentConfigs, saveConfig, saveConfigAs } from './configIO';
 import { SHORTCUTS, installShortcuts, type ShortcutScope } from './shortcuts';
-import { longFrames, measuredFps, renderBackend, resetPerfCounters, worstFrameMs } from '../render/Renderer';
+import { longFrames, measuredFps, renderBackend, resetPerfCounters, toolStatus, worstFrameMs } from '../render/Renderer';
 import { perfSummary, resetPerf } from '../render/perf';
 
 export function App() {
@@ -114,11 +114,6 @@ export function App() {
     return ` (v${h.version}, ${h.mock ? 'mock' : h.ros_distro ?? 'ros'})`;
   };
 
-  const addTool = () => {
-    const classes = app.manager.tools.classInfos();
-    const choice = window.prompt(`Tool class to add:\n${classes.map((c) => c.classId).join('\n')}`, classes[0]?.classId ?? '');
-    if (choice) app.manager.tools.addTool(choice);
-  };
 
   return (
     <div class="wrl-app">
@@ -144,10 +139,11 @@ export function App() {
             </button>
           )}
         </For>
-        <button type="button" title="Add a new tool" onClick={addTool}>+</button>
+        <button type="button" title="Add a new tool" onClick={() => app.setDialog('addTool')}>+</button>
       </div>
       <div class="wrl-dock" ref={dockEl} />
       <div class="wrl-statusbar">
+        <Show when={toolStatus()}><span class="wrl-tool-status">{toolStatus()}</span></Show>
         <span>Renderer: {renderBackend()} · {measuredFps()} FPS</span>
         <Show when={new URLSearchParams(location.search).has('perf')}>
           <span title="frames whose update+render took >16 ms / worst frame" onClick={() => { resetPerfCounters(); resetPerf(); }} style={{ cursor: 'pointer' }}>
@@ -167,6 +163,23 @@ export function App() {
       </div>
       <Show when={app.dialog() === 'addDisplay'}>
         <AddDisplayDialog onClose={(r) => { app.setDialog(null); if (r) app.addDisplay(r.classId, r.name, r.topic); }} />
+      </Show>
+      <Show when={app.dialog() === 'addTool'}>
+        <div class="wrl-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) app.setDialog(null); }}>
+          <div class="wrl-modal" role="dialog" aria-label="Add Tool">
+            <div class="wrl-modal-title">Add Tool</div>
+            <div class="wrl-add-tool-list">
+              <For each={app.manager.tools.classInfos()}>
+                {(c) => (
+                  <button type="button" onClick={() => { app.manager.tools.addTool(c.classId); app.setDialog(null); }} title={c.description}>
+                    <b>{c.name}</b> <span class="wrl-dim">{c.classId}{c.shortcut ? ` (${c.shortcut})` : ''}</span>
+                  </button>
+                )}
+              </For>
+            </div>
+            <div class="wrl-modal-buttons"><button type="button" onClick={() => app.setDialog(null)}>Cancel</button></div>
+          </div>
+        </div>
       </Show>
       <Show when={app.dialog() === 'about'}>
         <div class="wrl-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) app.setDialog(null); }}>

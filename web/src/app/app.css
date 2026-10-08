@@ -43,7 +43,11 @@ html, body, #root {
   color: var(--wrl-fg-dim);
   gap: 16px;
   font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
 }
+.wrl-statusbar > span { flex: none; }
+.wrl-tool-status { overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
 
 .wrl-menubar button, .wrl-toolbar button {
   background: transparent;
@@ -184,3 +188,8 @@ select.wrl-edit { background: #1e1e1e; }
 .wrl-time button.wrl-tool-active { background: #555; }
 .wrl-time-field { display: inline-flex; gap: 4px; align-items: center; }
 .wrl-time-field input { width: 90px; font: inherit; background: #222; color: var(--wrl-fg); border: 1px solid var(--wrl-border); border-radius: 3px; padding: 1px 4px; text-align: right; }
+
+.wrl-tool-status { color: #ffd866; }
+.wrl-add-tool-list { display: flex; flex-direction: column; gap: 4px; min-width: 360px; }
+.wrl-add-tool-list button { text-align: left; font: inherit; background: #333; color: var(--wrl-fg); border: 1px solid var(--wrl-border); border-radius: 3px; padding: 4px 8px; cursor: pointer; }
+.wrl-add-tool-list button:hover { background: #444; }

@@ -51,8 +51,8 @@ export class AppStore {
   readonly selectedProperty: Accessor<Property | null>;
   readonly setSelectedProperty: (p: Property | null) => void;
   /** Open modal dialog, if any. */
-  readonly dialog: Accessor<'addDisplay' | 'about' | null>;
-  readonly setDialog: (d: 'addDisplay' | 'about' | null) => void;
+  readonly dialog: Accessor<'addDisplay' | 'addTool' | 'about' | null>;
+  readonly setDialog: (d: 'addDisplay' | 'addTool' | 'about' | null) => void;
 
   constructor() {
     const [dp, setDp] = createSignal<DisplaysPanelState>(DEFAULT_DISPLAYS_PANEL_STATE);
@@ -79,7 +79,7 @@ export class AppStore {
     const [sel, setSel] = createSignal<Property | null>(null);
     this.selectedProperty = sel;
     this.setSelectedProperty = setSel;
-    const [dialog, setDialog] = createSignal<'addDisplay' | 'about' | null>(null);
+    const [dialog, setDialog] = createSignal<'addDisplay' | 'addTool' | 'about' | null>(null);
     this.dialog = dialog;
     this.setDialog = setDialog;
   }

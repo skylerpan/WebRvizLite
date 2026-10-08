@@ -7,7 +7,9 @@ import { createSignal, type Accessor } from 'solid-js';
 import { MOVE_CAMERA_INFO, MoveCameraTool } from './moveCamera';
 import { UnknownTool, isTool } from './Tool';
 import { GroupProperty } from '../property/Property';
-import type { Tool, ToolClassInfo, ToolContext } from './types';
+import { SET_GOAL_INFO, SetGoalTool } from './setGoal';
+import { SET_INITIAL_POSE_INFO, SetInitialPoseTool } from './setInitialPose';
+import type { Tool, ToolClassInfo, ToolContext, ViewportServices } from './types';
 import type { YamlValue } from '../property/types';
 import type { ViewportPointerEvent } from '../views/types';
 
@@ -29,9 +31,10 @@ export class ToolManager {
   readonly current: Accessor<Tool | null>;
   private readonly setCurrentSignal: (t: Tool | null) => void;
   private readonly ctx: ToolContext;
+  private viewport: ViewportServices | null = null;
 
-  constructor(ctx: Omit<ToolContext, 'revertToDefault'>) {
-    this.ctx = { ...ctx, revertToDefault: () => this.revertToDefault() };
+  constructor(ctx: Omit<ToolContext, 'revertToDefault' | 'viewport'>) {
+    this.ctx = { ...ctx, viewport: () => this.viewport, revertToDefault: () => this.revertToDefault() };
     const [tools, setTools] = createSignal<readonly Tool[]>([]);
     this.tools = tools;
     this.setTools = (t) => {
@@ -40,6 +43,8 @@ export class ToolManager {
     };
     [this.current, this.setCurrentSignal] = createSignal<Tool | null>(null);
     this.register(MOVE_CAMERA_INFO, () => new MoveCameraTool());
+    this.register(SET_INITIAL_POSE_INFO, () => new SetInitialPoseTool());
+    this.register(SET_GOAL_INFO, () => new SetGoalTool());
     this.load(null);
   }
 
@@ -47,6 +52,14 @@ export class ToolManager {
     const wanted = this.tools().filter((t) => t.available && t.properties.children().length > 0).map((t) => t.properties);
     for (const c of this.propertiesRoot.children().slice()) if (!wanted.includes(c as GroupProperty)) this.propertiesRoot.removeChild(c);
     for (const p of wanted) this.propertiesRoot.addChild(p);
+  }
+
+  /** The 3D view registers itself once mounted; the active tool is re-activated so it can draw helpers. */
+  attachViewport(v: ViewportServices | null) {
+    const cur = this.current();
+    cur?.deactivate();
+    this.viewport = v;
+    if (v) cur?.activate();
   }
 
   register(info: ToolClassInfo, create: () => Tool) {

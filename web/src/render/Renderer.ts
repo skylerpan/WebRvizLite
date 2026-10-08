@@ -3,6 +3,11 @@ import * as THREE from 'three/webgpu';
 import { getApp } from '../app/store';
 import { ViewportInput } from './input';
 import { enablePerf, measure } from './perf';
+import type { ViewportServices } from '../tools/types';
+import type { PickHit } from './picking';
+
+/** Status bar text set by the active tool (rviz Tool::setStatus). */
+export const [toolStatus, setToolStatus] = createSignal('');
 
 /** Which backend the renderer ended up on; shown in the status bar. */
 export const [renderBackend, setRenderBackend] = createSignal<string>('initializing');
@@ -23,9 +28,15 @@ export function resetPerfCounters() {
  * goes to the ToolManager. WebGPU by default, automatic WebGL2 fallback (or
  * `?webgl` to force it).
  */
-export class Viewport {
+export class Viewport implements ViewportServices {
   readonly renderer: THREE.WebGPURenderer;
   readonly scene: THREE.Scene;
+  /** Tool-drawn geometry (never pickable). */
+  readonly helpers = new THREE.Group();
+  private readonly raycaster = new THREE.Raycaster();
+  private readonly ndc = new THREE.Vector2();
+  private mouseX = 0;
+  private mouseY = 0;
   private readonly resizeObserver: ResizeObserver;
   private readonly input: ViewportInput;
   private disposed = false;
@@ -59,10 +70,20 @@ export class Viewport {
       return dispose;
     });
 
+    this.helpers.name = 'tool helpers';
+    this.helpers.userData.noPick = true;
+    this.scene.add(this.helpers);
     this.input = new ViewportInput(container, {
-      handleMouse: (e) => app.manager.tools.handleMouse(e),
+      handleMouse: (e) => {
+        if (e.type !== 'wheel') {
+          this.mouseX = e.x;
+          this.mouseY = e.y;
+        }
+        app.manager.tools.handleMouse(e);
+      },
       handleKey: (key, e) => app.handleViewportKey(key, e),
     });
+    app.manager.tools.attachViewport(this);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -111,8 +132,44 @@ export class Viewport {
     this.renderer.setSize(w, h, false);
   }
 
+  // --- ViewportServices (tools) ---------------------------------------------
+
+  camera(): THREE.Camera {
+    return getApp().manager.views.current().camera;
+  }
+  size() {
+    return { width: this.width, height: this.height };
+  }
+  lastMouse() {
+    return { x: this.mouseX, y: this.mouseY };
+  }
+  ray(x: number, y: number, out: THREE.Ray): THREE.Ray {
+    this.ndc.set((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1);
+    this.raycaster.setFromCamera(this.ndc, this.camera());
+    out.copy(this.raycaster.ray);
+    return out;
+  }
+  groundPoint(x: number, y: number, out: THREE.Vector3): boolean {
+    this.ray(x, y, tmpRay);
+    return tmpRay.intersectPlane(GROUND, out) !== null;
+  }
+  async pick(_x: number, _y: number, _w: number, _h: number): Promise<PickHit[]> {
+    return [];
+  }
+  async pickPoint(_x: number, _y: number): Promise<PickHit | null> {
+    return null;
+  }
+  setCursor(cursor: 'default' | 'crosshair' | 'move' | 'grab' | 'pointer') {
+    this.container.style.cursor = cursor;
+  }
+  setStatus(text: string) {
+    setToolStatus(text);
+  }
+
   dispose() {
     this.disposed = true;
+    getApp().manager.tools.attachViewport(null);
+    this.helpers.removeFromParent();
     this.disposeEffects?.();
     this.input.dispose();
     this.resizeObserver.disconnect();
@@ -121,3 +178,6 @@ export class Viewport {
     this.renderer.domElement.remove();
   }
 }
+
+const GROUND = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const tmpRay = new THREE.Ray();

@@ -106,7 +106,7 @@ export class VisualizationManager {
 
     this.views = new ViewManager({ tf: bridge.tf, fixedFrame });
     scene.add(this.views.helpers);
-    this.tools = new ToolManager({ views: this.views, bridge, fixedFrame });
+    this.tools = new ToolManager({ views: this.views, bridge, fixedFrame, rosTimeNs: this.rosTimeNs });
 
     this.fixedFrameProperty.onChange((v) => {
       const frame = stripLeadingSlash(v);
