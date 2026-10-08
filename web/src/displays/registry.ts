@@ -8,6 +8,7 @@ import { POSE_INFO, PoseDisplay } from './poseDisplay';
 import { POSE_ARRAY_INFO, PoseArrayDisplay } from './poseArrayDisplay';
 import { POINT_CLOUD2_INFO, PointCloud2Display } from './pointCloud2Display';
 import { LASER_SCAN_INFO, LaserScanDisplay } from './laserScanDisplay';
+import { LIVOX_INFO, LivoxDisplay } from './livoxDisplay';
 import { MARKER_ARRAY_INFO, MARKER_INFO, MarkerArrayDisplay, MarkerDisplay } from './markerDisplay';
 import type { DisplayRegistry } from './types';
 
@@ -23,6 +24,7 @@ export function createDisplayRegistry(fixedFrame: () => string): DisplayRegistry
   r.register(POSE_ARRAY_INFO, () => new PoseArrayDisplay());
   r.register(POINT_CLOUD2_INFO, () => new PointCloud2Display());
   r.register(LASER_SCAN_INFO, () => new LaserScanDisplay());
+  r.register(LIVOX_INFO, () => new LivoxDisplay());
   r.register(MARKER_INFO, () => new MarkerDisplay());
   r.register(MARKER_ARRAY_INFO, () => new MarkerArrayDisplay());
   return r;

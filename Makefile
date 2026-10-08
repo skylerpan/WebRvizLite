@@ -7,7 +7,7 @@ SHELL := /bin/bash
 WASM_OUT := web/src/wasm/pkg
 COMPOSE  := docker compose -f docker/compose.yml
 
-.PHONY: build wasm web server server-ros dev test check clean docker-build docker-shell docker-build-all docker-build-ros docker-run-ros docker-mock-scan
+.PHONY: build wasm web server server-ros dev test check clean docker-build docker-shell docker-build-all docker-build-ros docker-run-ros docker-mock-scene
 
 build: wasm web server
 
@@ -64,10 +64,12 @@ docker-build-all:
 docker-build-ros:
 	$(COMPOSE) run --rm dev make wasm web server-ros
 
-# Run the ROS-enabled server from the container (host network → http://127.0.0.1:8765).
+# Run the ROS-enabled server from the container (host network → http://127.0.0.1:8766,
+# leaving 8765 free for the host `--mock` server).
 docker-run-ros:
-	$(COMPOSE) run --rm dev ./target/release/webrvizlite --bind 0.0.0.0 --port 8765
+	$(COMPOSE) run --rm dev ./target/release/webrvizlite --bind 0.0.0.0 --port 8766 -d fixtures/mock_scene.rviz
 
-# Synthetic /scan, /tf, /tf_static publisher (rclpy) for testing the r2r path.
-docker-mock-scan:
-	$(COMPOSE) run --rm dev python3 tools/mock_scan.py
+# rclpy publisher of the whole mock scene (every topic in fixtures/mock_scene.rviz,
+# including livox_ros_driver2/CustomMsg) for testing the r2r path without hardware.
+docker-mock-scene:
+	$(COMPOSE) run --rm dev python3 tools/mock_scene.py

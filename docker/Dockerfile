@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential clang libclang-dev pkg-config \
         curl git ca-certificates gnupg sudo \
         ros-humble-rmw-cyclonedds-cpp \
+        ros-humble-map-msgs \
     && curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
@@ -33,11 +34,21 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --pr
     && rustup component add clippy rustfmt \
     && cargo install wasm-pack --locked
 
+# livox_ros_driver2/msg/CustomMsg is not in apt. r2r can only subscribe to
+# types it generated typesupport for (IDL_PACKAGE_FILTER in compose.yml), so
+# build a message-only copy of the upstream package (docker/livox_msgs: the
+# .msg files verbatim, same package name → same DDS type name) into
+# /opt/livox_ws. The driver node, Livox-SDK2 and PCL are not needed here.
+COPY --chown=dev:dev livox_msgs /opt/livox_ws/src/livox_ros_driver2
+RUN cd /opt/livox_ws \
+    && bash -c 'source /opt/ros/humble/setup.bash && colcon build --merge-install --cmake-args -DCMAKE_BUILD_TYPE=Release' \
+    && rm -rf /opt/livox_ws/build /opt/livox_ws/log
+
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 WORKDIR /ws
 
 # Source ROS for every command (interactive shells and `run` commands alike).
-RUN echo 'source /opt/ros/humble/setup.bash' >> ${HOME}/.bashrc
+RUN echo 'source /opt/ros/humble/setup.bash && source /opt/livox_ws/install/setup.bash' >> ${HOME}/.bashrc
 COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]

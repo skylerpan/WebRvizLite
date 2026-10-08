@@ -1,5 +1,6 @@
-//! sensor_msgs/PointCloud2 and sensor_msgs/LaserScan → a flat point set
-//! (`Points`) that the colour transformers in [`crate::pointcloud`] consume.
+//! sensor_msgs/PointCloud2, sensor_msgs/LaserScan and livox_ros_driver2/CustomMsg
+//! → a flat point set (`Points`) that the colour transformers in
+//! [`crate::pointcloud`] consume.
 
 use super::common::Header;
 use crate::cdr::{CdrError, Reader};
@@ -185,6 +186,74 @@ pub fn decode_laser_scan(bytes: &[u8]) -> Result<LaserScan, CdrError> {
     })
 }
 
+/// livox_ros_driver2/msg/CustomMsg (what the Livox driver publishes with
+/// `xfer_format: 1`), split into per-field columns. Layout:
+///
+/// ```text
+/// CustomMsg:   std_msgs/Header header; uint64 timebase; uint32 point_num;
+///              uint8 lidar_id; uint8[3] rsvd; CustomPoint[] points
+/// CustomPoint: uint32 offset_time; float32 x, y, z;
+///              uint8 reflectivity, tag, line
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct LivoxCustomMsg {
+    pub header: Header,
+    /// Time of the first point, ns.
+    pub timebase: u64,
+    /// Count the driver wrote; equals `xyz.len() / 3` for a well-formed message.
+    pub point_num: u32,
+    pub lidar_id: u8,
+    /// xyz × n, metres in the lidar frame. Livox writes (0, 0, 0) for no return.
+    pub xyz: Vec<f32>,
+    /// Per-point offset from `timebase`, ns (exact up to 2^24).
+    pub offset_time: Vec<f32>,
+    /// 0–255.
+    pub reflectivity: Vec<f32>,
+    pub tag: Vec<f32>,
+    /// Laser number within the lidar.
+    pub line: Vec<f32>,
+}
+
+/// Bytes of one `CustomPoint` without the trailing pad: uint32 + 3 × float32 +
+/// 3 × uint8. The next element's uint32 re-aligns to 4, so the stride is 20.
+const LIVOX_POINT_BYTES: usize = 19;
+
+pub fn decode_livox_custom_msg(bytes: &[u8]) -> Result<LivoxCustomMsg, CdrError> {
+    let mut r = Reader::new(bytes)?;
+    let header = Header::read(&mut r)?;
+    let timebase = r.u64()?;
+    let point_num = r.u32()?;
+    let lidar_id = r.u8()?;
+    r.bytes(3)?; // rsvd
+    let n = r.seq_len(LIVOX_POINT_BYTES)?;
+    let mut m = LivoxCustomMsg {
+        header,
+        timebase,
+        point_num,
+        lidar_id,
+        xyz: Vec::with_capacity(n * 3),
+        offset_time: Vec::with_capacity(n),
+        reflectivity: Vec::with_capacity(n),
+        tag: Vec::with_capacity(n),
+        line: Vec::with_capacity(n),
+    };
+    for _ in 0..n {
+        let t = r.u32()?;
+        let x = r.f32()?;
+        let y = r.f32()?;
+        let z = r.f32()?;
+        let reflectivity = r.u8()?;
+        let tag = r.u8()?;
+        let line = r.u8()?;
+        m.offset_time.push(t as f32);
+        m.xyz.extend_from_slice(&[x, y, z]);
+        m.reflectivity.push(reflectivity as f32);
+        m.tag.push(tag as f32);
+        m.line.push(line as f32);
+    }
+    Ok(m)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,5 +309,49 @@ mod tests {
         assert_eq!(s.ranges.len(), 5);
         assert_eq!(s.angle_increment, 0.5);
         assert!(s.intensities.is_empty());
+    }
+
+    /// Writes a CustomMsg exactly as rosidl's CDR serializer would (20-byte point stride).
+    pub fn write_livox(points: &[(u32, [f32; 3], [u8; 3])], frame: &str) -> Vec<u8> {
+        let mut w = Writer::new();
+        w.i32(1).u32(0).string(frame);
+        w.u64(1_700_000_000_000_000_000)
+            .u32(points.len() as u32)
+            .u8(7);
+        w.bytes(&[0, 0, 0]);
+        w.seq_len(points.len());
+        for (t, xyz, rtl) in points {
+            w.u32(*t);
+            for v in xyz {
+                w.f32(*v);
+            }
+            w.bytes(rtl);
+        }
+        w.finish()
+    }
+
+    #[test]
+    fn livox_custom_msg_decodes_with_20_byte_stride() {
+        let bytes = write_livox(
+            &[
+                (0, [1.0, 2.0, 3.0], [200, 16, 1]),
+                (1000, [0.0, 0.0, 0.0], [0, 0, 2]),
+            ],
+            "livox_frame",
+        );
+        // Payload: stamp(8) + string(4 + 12) = 24 (8-aligned already), timebase(8),
+        // point_num(4), lidar_id(1), rsvd(3), seq len(4) = 44; then 20 + 19 bytes of points.
+        assert_eq!(bytes.len(), 4 + 44 + 20 + 19);
+        let m = decode_livox_custom_msg(&bytes).unwrap();
+        assert_eq!(m.header.frame_id, "livox_frame");
+        assert_eq!(m.timebase, 1_700_000_000_000_000_000);
+        assert_eq!((m.point_num, m.lidar_id), (2, 7));
+        assert_eq!(m.xyz, vec![1.0, 2.0, 3.0, 0.0, 0.0, 0.0]);
+        assert_eq!(m.offset_time, vec![0.0, 1000.0]);
+        assert_eq!(m.reflectivity, vec![200.0, 0.0]);
+        assert_eq!(m.tag, vec![16.0, 0.0]);
+        assert_eq!(m.line, vec![1.0, 2.0]);
+        // A truncated point list is an error, not a panic.
+        assert!(decode_livox_custom_msg(&bytes[..bytes.len() - 5]).is_err());
     }
 }

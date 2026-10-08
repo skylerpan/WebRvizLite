@@ -17,7 +17,7 @@ services:
       ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
       # r2r generates typesupport bindings at build time for these packages only.
       # No automatic dependency resolution: nested packages must be listed too.
-      IDL_PACKAGE_FILTER: "builtin_interfaces;std_msgs;geometry_msgs;sensor_msgs;nav_msgs;tf2_msgs;visualization_msgs;map_msgs;rosgraph_msgs;shape_msgs;std_srvs"
+      IDL_PACKAGE_FILTER: "builtin_interfaces;std_msgs;geometry_msgs;sensor_msgs;nav_msgs;tf2_msgs;visualization_msgs;map_msgs;rosgraph_msgs;shape_msgs;std_srvs;livox_ros_driver2"
     volumes:
       - ..:/ws
       - cargo-registry:/home/dev/.cargo/registry

@@ -39,6 +39,7 @@ export type Decoder =
   | 'none'          // statistics only (debug panel)
   | 'tf'            // feeds the tf buffer, nothing posted
   | 'laser_scan'
+  | 'livox_custom_msg'
   | 'point_cloud2'
   | 'occupancy_grid'
   | 'occupancy_grid_update'
