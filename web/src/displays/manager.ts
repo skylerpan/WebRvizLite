@@ -117,6 +117,7 @@ export class VisualizationManager {
     this.views = new ViewManager({ tf: bridge.tf, fixedFrame });
     scene.add(this.views.helpers);
     this.views.helpers.userData.noPick = true;
+    this.views.helpers.userData.mainViewOnly = true;
     this.tools = new ToolManager({ views: this.views, bridge, fixedFrame, rosTimeNs: this.rosTimeNs, selection: this.selection });
 
     this.fixedFrameProperty.onChange((v) => {

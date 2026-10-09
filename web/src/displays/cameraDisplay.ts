@@ -5,13 +5,12 @@
  */
 
 import * as THREE from 'three/webgpu';
-import { RosTopicDisplayBase } from './Display';
+import { DisplayGroupImpl, RosTopicDisplayBase } from './Display';
 import { BoolPropertyImpl, EnumPropertyImpl, FloatPropertyImpl } from '../property/Property';
 import type { Display, DisplayClassInfo, ExtraView } from './types';
 import type { DataMessage } from '../worker/messages';
 import type { CameraInfoMsg, ImageMsg } from '../worker/decoders';
 import { CameraPanel, type ImageRendering } from '../panels/CameraPanel';
-import { allocLayer, releaseLayer } from '../render/layers';
 
 export const CAMERA_INFO_DISPLAY: DisplayClassInfo = {
   classId: 'rviz_default_plugins/Camera',
@@ -19,6 +18,14 @@ export const CAMERA_INFO_DISPLAY: DisplayClassInfo = {
   description: 'Displays an image from a camera, with the visualized world rendered behind it.',
   messageTypes: ['sensor_msgs/msg/Image'],
 };
+
+/**
+ * Upper bound for re-rendering the camera view when no new image arrived
+ * (rviz redraws it every frame). The scene has no cheap "changed" signal, so
+ * the view is refreshed at this rate to follow moving geometry; a new image
+ * or CameraInfo redraws immediately.
+ */
+export const CAMERA_VIEW_MAX_HZ = 15;
 
 let nextPanelId = 1;
 
@@ -41,9 +48,16 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
   private infoFrame = '';
   private imageFrame = '';
   private readonly camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.01, 100);
-  private layer = 0;
   private readonly visProps = new Map<Display, BoolPropertyImpl>();
   private savedVisibility: Record<string, boolean> = {};
+  /** Display list the Visibility rows were last synced against (the signal hands out a new array on change). */
+  private syncedDisplays: readonly Display[] | null = null;
+  /** A new image or CameraInfo arrived since the last render. */
+  private viewDirty = false;
+  private lastRenderMs = -Infinity;
+  private lastTransformOk: boolean | null = null;
+  /** Objects hidden for the duration of one camera render (reused, no per-frame allocation). */
+  private readonly hiddenNodes: THREE.Object3D[] = [];
 
   constructor() {
     super(CAMERA_INFO_DISPLAY.classId, CAMERA_INFO_DISPLAY.name, CAMERA_INFO_DISPLAY.messageTypes, CAMERA_INFO_DISPLAY.description, { depth: 5 });
@@ -58,6 +72,7 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
     this.camera.matrixAutoUpdate = true;
     this.topic.onChange(() => this.resubscribeInfo());
     for (const c of this.topic.children()) c.onChange(() => this.resubscribeInfo());
+    for (const p of [this.imageRendering, this.overlayAlpha, this.zoomFactor, this.farPlane, this.visibility]) p.onChange(() => (this.viewDirty = true));
     CameraPanel.closeHandlers.set(this.panelId, (byUser) => {
       this.panelOpen = false;
       if (byUser && this.enabled()) this.setEnabled(false);
@@ -65,8 +80,6 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
   }
 
   protected override onInitialize() {
-    this.layer = allocLayer();
-    this.camera.layers.set(this.layer);
     this.context!.extraViews.add(this);
   }
 
@@ -116,6 +129,7 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
       (m) => {
         this.info = (m as DataMessage).data as CameraInfoMsg;
         this.infoFrame = (m as DataMessage).frameId;
+        this.viewDirty = true;
         this.setStatus('ok', 'Camera Info', `OK (${infoTopic})`);
       },
       {},
@@ -134,16 +148,18 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
   processMessage(msg: DataMessage) {
     const d = msg.data as ImageMsg;
     this.imageFrame = msg.frameId;
+    this.viewDirty = true;
     this.setStatus('ok', 'Image', `${d.width} x ${d.height} ${d.encoding}`);
     CameraPanel.get(this.panelId)?.setImage(d);
   }
 
   // --- visibility list -----------------------------------------------------
 
-  private syncVisibility() {
-    const displays = this.context?.rootDisplays() ?? [];
-    for (const [d, p] of [...this.visProps]) {
-      if (!displays.includes(d)) {
+  /** Rebuilds the Visibility rows for a changed top-level display list. */
+  private syncVisibility(displays: readonly Display[]) {
+    const present = new Set(displays);
+    for (const [d, p] of this.visProps) {
+      if (!present.has(d)) {
         this.visibility.removeChild(p);
         this.visProps.delete(d);
       }
@@ -151,7 +167,27 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
     for (const d of displays) {
       if (d === this || this.visProps.has(d)) continue;
       const p = new BoolPropertyImpl(d.name(), this.savedVisibility[d.name()] ?? true, this.visibility, { description: `Show "${d.name()}" in this camera view.` });
+      p.onChange(() => (this.viewDirty = true));
       this.visProps.set(d, p);
+    }
+  }
+
+  /**
+   * Hides the displays unticked in Visibility (and this display itself) for
+   * the camera render. Group children are hidden with their group: a child's
+   * scene node hangs directly under the scene, not under the group's node.
+   */
+  private hideForRender(displays: readonly Display[], hideAll: boolean) {
+    for (const d of displays) {
+      const hide = hideAll || d === this || this.visProps.get(d)?.value() === false;
+      if (d instanceof DisplayGroupImpl) {
+        this.hideForRender(d.displays(), hide);
+        continue;
+      }
+      if (hide && d.sceneNode.visible) {
+        d.sceneNode.visible = false;
+        this.hiddenNodes.push(d.sceneNode);
+      }
     }
   }
 
@@ -159,34 +195,45 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
 
   override update() {
     if (!this.panelOpen) this.ensurePanel();
-    this.syncVisibility();
+    const displays = this.context?.rootDisplays();
+    if (displays && displays !== this.syncedDisplays) {
+      this.syncedDisplays = displays;
+      this.syncVisibility(displays);
+    }
+  }
+
+  private setTransformStatus(ok: boolean, text: string) {
+    if (this.lastTransformOk === ok && ok) return;
+    this.lastTransformOk = ok;
+    this.setStatus(ok ? 'ok' : 'error', 'Transform', text);
   }
 
   /** Called by the main render loop after the 3D view (ExtraView). */
   render() {
     const panel = CameraPanel.get(this.panelId);
     const ctx = this.context;
-    if (!panel || !ctx || !this.enabled()) return;
+    if (!panel || !ctx || !this.enabled() || !panel.isVisible()) return;
+    const now = performance.now();
+    if (!this.viewDirty && now - this.lastRenderMs < 1000 / CAMERA_VIEW_MAX_HZ) return;
     const frame = this.infoFrame || this.imageFrame;
     if (!frame) return;
     if (!ctx.tf.lookup(frame, tmpM, this.camera.position, tmpQ)) {
-      this.setStatus('error', 'Transform', `No transform from [${frame}] to [${ctx.fixedFrame()}]`);
+      this.setTransformStatus(false, `No transform from [${frame}] to [${ctx.fixedFrame()}]`);
       return;
     }
-    this.setStatus('ok', 'Transform', 'Transform OK');
+    this.setTransformStatus(true, 'Transform OK');
     // ROS optical frame (z forward, y down) → three camera (-z forward, y up): 180° about x.
     this.camera.quaternion.copy(tmpQ).multiply(OPTICAL_TO_CAMERA);
     this.camera.updateMatrixWorld();
     const info = this.info;
-    const imageSize = panel.imageSize();
-    const w = info?.width || imageSize.width || 640;
-    const h = info?.height || imageSize.height || 480;
+    const w = info?.width || panel.imageWidth || 640;
+    const h = info?.height || panel.imageHeight || 480;
     // camera_display.cpp uses the projection matrix P (binning and ROI are ignored).
     const fx = info?.p[0] || w;
     const fy = info?.p[5] || fx;
     const cx = info?.p[2] || w / 2;
     const cy = info?.p[6] || h / 2;
-    if (info && ![fx, fy, cx, cy].every(Number.isFinite)) {
+    if (info && !(Number.isFinite(fx) && Number.isFinite(fy) && Number.isFinite(cx) && Number.isFinite(cy))) {
       this.setStatus('error', 'Camera Info', 'Contains invalid floating point values (nans or infs)');
       return;
     }
@@ -201,10 +248,9 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
     const near = 0.01;
     const far = this.farPlane.value();
     // Zoom keeps the image aspect: only the axis that would distort is shrunk.
-    const size = panel.imageSize();
     let zx = this.zoomFactor.value();
     let zy = zx;
-    const panelAspect = size.width && size.height ? size.width / size.height : w / h;
+    const panelAspect = panel.imageWidth && panel.imageHeight ? panel.imageWidth / panel.imageHeight : w / h;
     const imgAspect = w / fx / (h / fy);
     if (imgAspect > panelAspect) zy = (zy / imgAspect) * panelAspect;
     else zx = (zx * imgAspect) / panelAspect;
@@ -218,14 +264,24 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
     this.camera.far = far;
     this.camera.projectionMatrix.makePerspective(left, right, top, bottom, near, far, coord);
     this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
-    // Visibility: enable this view's layer bit on the chosen displays only.
-    for (const d of ctx.rootDisplays()) {
-      const on = d !== this && (this.visProps.get(d)?.value() ?? true);
-      d.sceneNode.traverse((o) => (on ? o.layers.enable(this.layer) : o.layers.disable(this.layer)));
-    }
     const mode = this.imageRendering.value();
     const rendering: ImageRendering = mode === 'background' ? 'background' : mode === 'overlay' ? 'overlay' : 'both';
-    panel.render(ctx.scene, this.camera, rendering, this.overlayAlpha.value());
+    // Visibility: hide the unticked displays and the main-view-only helpers for this render.
+    this.hideForRender(ctx.rootDisplays(), false);
+    for (const o of ctx.scene.children) {
+      if (o.userData.mainViewOnly && o.visible) {
+        o.visible = false;
+        this.hiddenNodes.push(o);
+      }
+    }
+    try {
+      panel.render(ctx.scene, this.camera, rendering, this.overlayAlpha.value());
+    } finally {
+      for (const o of this.hiddenNodes) o.visible = true;
+      this.hiddenNodes.length = 0;
+    }
+    this.viewDirty = false;
+    this.lastRenderMs = now;
   }
 
   override save() {
@@ -245,11 +301,6 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
     this.closePanel();
     this.unsubscribeInfo();
     this.context?.extraViews.delete(this);
-    if (this.layer) {
-      for (const d of this.context?.rootDisplays() ?? []) d.sceneNode.traverse((o) => o.layers.disable(this.layer));
-      releaseLayer(this.layer);
-      this.layer = 0;
-    }
     super.dispose();
   }
 }

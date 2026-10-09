@@ -69,6 +69,16 @@ depth-1 / transient-local subscriptions so 10 Hz clouds are not re-sent.
   panel re-uploads whole point-cloud buffers each frame (measured 1.6 ms for the
   mock scene; grows with cloud size). Rendering the camera view with the main
   renderer into a render target and blitting to the panel would avoid it.
+- **Camera view refresh rate (deliberate rviz deviation).** rviz redraws the
+  camera render panel every frame; WebRvizLite redraws it when a new image or
+  CameraInfo arrives and otherwise at most `CAMERA_VIEW_MAX_HZ` (15 Hz,
+  `web/src/displays/cameraDisplay.ts`), because the second full scene render
+  was the single largest per-frame cost (`docs/perf-static-analysis.md` §1.1)
+  and the scene has no cheap "changed" signal. Hidden panels are not rendered.
+  Visibility is applied by hiding the unticked displays' scene nodes for the
+  duration of the camera render (three.js layers are not inherited by
+  children and objects added later would miss the bit), which also makes
+  displays inside Groups follow their group's Visibility row.
 - **Select tool and 300k-point boxes.** A box over a dense cloud returns one hit
   per visible point; the Selection panel is virtualised, but the highlight boxes
   stop at 2,000 hits (`SelectionManager.MAX_HIGHLIGHTS`).

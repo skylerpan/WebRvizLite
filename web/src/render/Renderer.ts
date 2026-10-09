@@ -79,6 +79,7 @@ export class Viewport implements ViewportServices {
     container.appendChild(this.selectBox);
     this.helpers.name = 'tool helpers';
     this.helpers.userData.noPick = true;
+    this.helpers.userData.mainViewOnly = true;
     this.scene.add(this.helpers);
     this.input = new ViewportInput(container, {
       handleMouse: (e) => {

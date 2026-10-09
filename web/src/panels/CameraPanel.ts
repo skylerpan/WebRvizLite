@@ -81,8 +81,17 @@ export class CameraPanel implements IContentRenderer {
     this.texture.needsUpdate = true;
   }
 
-  imageSize() {
-    return { width: this.imageW, height: this.imageH };
+  get imageWidth() {
+    return this.imageW;
+  }
+
+  get imageHeight() {
+    return this.imageH;
+  }
+
+  /** False while the dock panel is hidden or the renderer is still initialising: rendering would be wasted. */
+  isVisible() {
+    return this.renderer !== null && this.ready && this.visible;
   }
 
   coordinateSystem(): THREE.CoordinateSystem {

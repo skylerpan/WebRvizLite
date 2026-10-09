@@ -36,6 +36,7 @@ export class SelectionManager {
     [this.count, this.setCount] = createSignal(0);
     this.highlight.name = 'selection highlight';
     this.highlight.userData.noPick = true;
+    this.highlight.userData.mainViewOnly = true;
   }
 
   private key(hit: PickHit) {
