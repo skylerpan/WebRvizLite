@@ -52,6 +52,10 @@ export class GridCellsDisplay extends MessageFilterDisplayBase<DataMessage> {
     this.buffer.colors.needsUpdate = true;
   }
 
+  protected override latestOnly() {
+    return true;
+  }
+
   processMessage(msg: DataMessage) {
     const d = msg.data as GridCellsMsg;
     if (!msg.inFixedFrame) {

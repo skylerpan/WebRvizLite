@@ -178,6 +178,10 @@ export class MapDisplay extends RosTopicDisplayBase<DataMessage> {
     this.gridTexture.needsUpdate = true;
   }
 
+  protected override latestOnly() {
+    return true;
+  }
+
   processMessage(msg: DataMessage) {
     const g = msg.data as OccupancyGridMsg;
     if (g.width === 0 || g.height === 0) {

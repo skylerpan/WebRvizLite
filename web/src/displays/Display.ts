@@ -131,6 +131,17 @@ export abstract class RosTopicDisplayBase<Msg> extends DisplayBase implements Ro
   protected decoderOptions(): Record<string, unknown> {
     return {};
   }
+  /**
+   * True when the display only needs the newest message (it replaces its state
+   * on every message): intermediate messages may then be skipped under load.
+   * Displays that accumulate (markers, odometry history, map updates) keep false.
+   */
+  protected latestOnly(): boolean {
+    return false;
+  }
+  private subscriptionOptions(): Record<string, unknown> {
+    return { ...this.decoderOptions(), latestOnly: this.latestOnly() };
+  }
   protected subscriptionId: number | null = null;
 
   constructor(classId: string, name: string, messageTypes: readonly string[], description = '', opts: { depth?: number; messageFilter?: boolean } = {}) {
@@ -165,7 +176,7 @@ export abstract class RosTopicDisplayBase<Msg> extends DisplayBase implements Ro
     this.subscriptionId = this.context.bridge.subscribe(
       topic, type, this.qos(), this.decoder,
       (m) => measure(`msg ${this.name()}`, () => this.processMessage(m as Msg)),
-      this.decoderOptions(),
+      this.subscriptionOptions(),
       (message) => this.setStatus('error', 'Topic', message),
     );
     this.setStatus('ok', 'Topic', 'OK');
@@ -173,7 +184,7 @@ export abstract class RosTopicDisplayBase<Msg> extends DisplayBase implements Ro
 
   /** Pushes new decoder options to the worker without resubscribing. */
   protected updateDecoderOptions() {
-    if (this.subscriptionId !== null && this.context) this.context.bridge.setOptions(this.subscriptionId, this.decoderOptions());
+    if (this.subscriptionId !== null && this.context) this.context.bridge.setOptions(this.subscriptionId, this.subscriptionOptions());
   }
 
   protected unsubscribe() {

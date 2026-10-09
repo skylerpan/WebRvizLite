@@ -93,6 +93,10 @@ export class PoseDisplay extends MessageFilterDisplayBase<DataMessage> {
     this.axes.set(this.axesLength.value(), this.axesRadius.value());
   }
 
+  protected override latestOnly() {
+    return true;
+  }
+
   processMessage(msg: DataMessage) {
     const d = msg.data as PosesMsg;
     if (!msg.inFixedFrame) {

@@ -39,7 +39,7 @@ describe('RobotModel (rviz lyrical)', () => {
     let topic = '';
     let deliver: ((m: DataMessage) => void) | null = null;
     d.initialize(fakeContext((t, q, h) => { topic = t; qos = q; deliver = h; }));
-    return { d, topic: () => topic, qos: () => qos, deliver: (text: string) => deliver?.({ type: 'data', id: 1, decoder: 'string', stampNs: 0, frameId: '', inFixedFrame: true, tfError: null, data: { text } }) };
+    return { d, topic: () => topic, qos: () => qos, deliver: (text: string) => deliver?.({ type: 'data', id: 1, seq: 0, decoder: 'string', stampNs: 0, frameId: '', inFixedFrame: true, tfError: null, data: { text } }) };
   };
 
   it('has an empty Description Topic by default, generic QoS rows, but subscribes transient local depth 1', () => {
@@ -113,7 +113,7 @@ describe('Image display normalisation rows (rviz image_display.cpp)', () => {
   it('shows the rows only for float / 16-bit images and hides Min/Max or Median window by Normalize Range', () => {
     const d = new ImageDisplay();
     d.initialize(fakeContext(() => {}));
-    const frame = (encoding: string): DataMessage => ({ type: 'data', id: 1, decoder: 'image', stampNs: 0, frameId: 'cam', inFixedFrame: false, tfError: null, data: { width: 1, height: 1, encoding, rgba: new Uint8Array(4) } });
+    const frame = (encoding: string): DataMessage => ({ type: 'data', id: 1, seq: 0, decoder: 'image', stampNs: 0, frameId: 'cam', inFixedFrame: false, tfError: null, data: { width: 1, height: 1, encoding, rgba: new Uint8Array(4) } });
     expect(d.normalizeRange.hidden()).toBe(true);
     d.processMessage(frame('rgb8'));
     expect(d.normalizeRange.hidden()).toBe(true);

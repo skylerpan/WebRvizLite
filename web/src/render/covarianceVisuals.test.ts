@@ -90,12 +90,12 @@ describe('Odometry display covariance pools', () => {
     d.initialize(fakeContext());
     const redraw = vi.spyOn(d as unknown as { redraw: () => void }, 'redraw');
     const covs = (d as unknown as { covs: CovarianceVisuals }).covs;
-    for (const x of [0, 1, 2]) deliver!({ type: 'data', id: 1, decoder: 'odometry', stampNs: 0, frameId: 'odom', inFixedFrame: true, tfError: null, data: msg(x, true) });
+    for (const x of [0, 1, 2]) deliver!({ type: 'data', id: 1, seq: 0, decoder: 'odometry', stampNs: 0, frameId: 'odom', inFixedFrame: true, tfError: null, data: msg(x, true) });
     expect(redraw).toHaveBeenCalledTimes(3);
     // Keep = 2: the oldest pose was trimmed, two remain.
     expect(covs.counts()).toEqual({ ellipsoids: 2, discs: 0, sectors: 2 });
     // A pose within the tolerances is skipped without a redraw.
-    deliver!({ type: 'data', id: 1, decoder: 'odometry', stampNs: 0, frameId: 'odom', inFixedFrame: true, tfError: null, data: msg(2.01, true) });
+    deliver!({ type: 'data', id: 1, seq: 0, decoder: 'odometry', stampNs: 0, frameId: 'odom', inFixedFrame: true, tfError: null, data: msg(2.01, true) });
     expect(redraw).toHaveBeenCalledTimes(3);
     d.covariance.setValue(false, 'user');
     expect(covs.counts()).toEqual({ ellipsoids: 0, discs: 0, sectors: 0 });

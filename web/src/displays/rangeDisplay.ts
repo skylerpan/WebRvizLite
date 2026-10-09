@@ -36,6 +36,7 @@ export class RangeDisplay extends MessageFilterDisplayBase<DataMessage> {
     this.bufferLength.onChange(() => {
       this.trim();
       this.redraw();
+      this.updateDecoderOptions();
     });
   }
 
@@ -69,6 +70,10 @@ export class RangeDisplay extends MessageFilterDisplayBase<DataMessage> {
       this.cones.push(tmpPos.x, tmpPos.y, tmpPos.z, tmpQ.x, tmpQ.y, tmpQ.z, tmpQ.w, r, r, range, c.r, c.g, c.b, a);
     }
     this.cones.end();
+  }
+
+  protected override latestOnly() {
+    return this.bufferLength.value() === 1;
   }
 
   processMessage(msg: DataMessage) {

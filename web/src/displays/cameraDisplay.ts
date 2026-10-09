@@ -132,7 +132,7 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
         this.viewDirty = true;
         this.setStatus('ok', 'Camera Info', `OK (${infoTopic})`);
       },
-      {},
+      { latestOnly: true },
       (message) => this.setStatus('error', 'Camera Info', message),
     );
     this.setStatus('warn', 'Camera Info', `Expecting Camera Info on topic [${infoTopic}]. No CameraInfo received. Topic may not exist.`);
@@ -143,6 +143,10 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
       this.context.bridge.unsubscribe(this.infoSubscription);
       this.infoSubscription = null;
     }
+  }
+
+  protected override latestOnly() {
+    return true;
   }
 
   processMessage(msg: DataMessage) {

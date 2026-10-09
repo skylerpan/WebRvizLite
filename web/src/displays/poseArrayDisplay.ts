@@ -118,6 +118,10 @@ export class PoseArrayDisplay extends MessageFilterDisplayBase<DataMessage> {
     }
   }
 
+  protected override latestOnly() {
+    return true;
+  }
+
   processMessage(msg: DataMessage) {
     const d = msg.data as PosesMsg;
     if (!msg.inFixedFrame) {

@@ -75,6 +75,8 @@ export interface SubscriptionStats {
   error: string | null;
   /** Transport the last frame arrived on. */
   via: 'ws' | 'wt' | null;
+  /** Frames skipped because a newer one arrived before the previous was applied (latest-only subscriptions). */
+  dropped: number;
 }
 
 /**
@@ -97,6 +99,8 @@ export interface TfSnapshotMessage {
 export interface DataMessage {
   type: 'data';
   id: number;
+  /** Per-subscription sequence number, acknowledged by the main thread once applied (latest-only gate). */
+  seq: number;
   decoder: Decoder;
   /** Message stamp in ns. */
   stampNs: number;
@@ -120,7 +124,9 @@ export type MainToWorker =
   /** Time the tf snapshot is taken at (ns); 0n = latest. Set while the Time panel is paused. */
   | { type: 'tf_time'; timeNs: bigint }
   /** Channel values of one point of the subscription's latest cloud (Selection panel). */
-  | { type: 'describe_point'; id: number; index: number; requestId: number };
+  | { type: 'describe_point'; id: number; index: number; requestId: number }
+  /** The main thread applied message `seq` of subscription `id` (latest-only delivery gate). */
+  | { type: 'ack'; id: number; seq: number };
 
 export type WorkerToMain =
   | { type: 'wasm'; version: string }

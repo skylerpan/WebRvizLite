@@ -65,6 +65,10 @@ export class PoseWithCovarianceDisplay extends MessageFilterDisplayBase<DataMess
     }
   }
 
+  protected override latestOnly() {
+    return true;
+  }
+
   processMessage(msg: DataMessage) {
     const d = msg.data as PoseCovMsg;
     if (!msg.inFixedFrame) {

@@ -165,6 +165,8 @@ export class VisualizationManager {
     const rosDt = this.lastRosNs && ros ? Number(ros - this.lastRosNs) / 1e9 : wallDt;
     this.lastRosNs = ros;
     this.updateFixedFrameStatusIfChanged();
+    // Apply the messages received since the last frame (latest-only delivery, see worker/delivery.ts).
+    this.bridge.flushPending();
     this.views.update(wallDt);
     this.root.update(wallDt, rosDt);
     this.selection.update();

@@ -32,6 +32,11 @@ export class LaserScanDisplay extends MessageFilterDisplayBase<DataMessage> impl
     this.updateDecoderOptions();
   }
 
+  /** With Decay Time 0 only the newest cloud is shown, so intermediate clouds may be skipped. */
+  protected override latestOnly() {
+    return this.cloud.decayTime.value() === 0;
+  }
+
   describePoint(index: number) {
     if (this.subscriptionId === null || !this.context) return Promise.resolve(null);
     return this.context.bridge.describePoint(this.subscriptionId, index);

@@ -46,6 +46,10 @@ export class PolygonDisplay extends MessageFilterDisplayBase<DataMessage> {
     this.updateMaterial();
   }
 
+  protected override latestOnly() {
+    return true;
+  }
+
   processMessage(msg: DataMessage) {
     const d = msg.data as PointsMsg;
     if (!msg.inFixedFrame) {

@@ -8,6 +8,7 @@
 import init, { ImageConverter, TfBuffer, pointInfoJson, version } from '../wasm/pkg/webrvizlite';
 import type { Decoder, Hello, MainToWorker, QosProfile, SubscriptionStats, WorkerToMain } from './messages';
 import { decodeMessage } from './decoders';
+import { DeliveryGate } from './delivery';
 
 const post = (msg: WorkerToMain, transfer?: Transferable[]) => (transfer ? postMessage(msg, { transfer }) : postMessage(msg));
 
@@ -44,6 +45,8 @@ export interface Subscription {
 }
 
 const subscriptions = new Map<number, Subscription>();
+/** Latest-only delivery gate (see delivery.ts): one unacked message per subscription. */
+const gate = new DeliveryGate();
 let ws: WebSocket | null = null;
 let connected = false;
 let reconnectDelay = RECONNECT_MIN_MS;
@@ -286,17 +289,26 @@ function onFrame(buf: ArrayBuffer, via: 'ws' | 'wt') {
     return;
   }
   if (s.decoder === 'none' || !tfBuffer) return;
+  // Latest-only subscriptions: while the main thread has not applied the previous
+  // message, keep only the newest raw payload and decode it on the ack.
+  if (gate.offer(id, payload, s.options.latestOnly === true) === 'defer') return;
+  decodeAndPost(s, payload);
+}
+
+function decodeAndPost(s: Subscription, payload: Uint8Array) {
+  if (!tfBuffer) return;
+  // The payload actually shown is the one describe_point must answer for.
   if (s.options.selectable) s.lastPayload = payload;
   else s.lastPayload = undefined;
   try {
     const result = decodeMessage(s, payload, tfBuffer, fixedFrame);
     if (result) {
-      post({ type: 'data', id, decoder: s.decoder, ...result.meta, data: result.data }, result.transfer);
+      post({ type: 'data', id: s.id, seq: gate.sent(s.id), decoder: s.decoder, ...result.meta, data: result.data }, result.transfer);
       s.error = null;
     }
   } catch (e) {
     s.error = `decode failed: ${String(e)}`;
-    post({ type: 'error', id, message: s.error });
+    post({ type: 'error', id: s.id, message: s.error });
   }
 }
 
@@ -326,6 +338,7 @@ function snapshotStats(): SubscriptionStats[] {
       hz: s.recent.length * (1000 / RATE_WINDOW_MS),
       bps: bytes * (1000 / RATE_WINDOW_MS),
       lastBytes: s.lastBytes, lastReceiveMs: s.lastReceiveMs, error: s.error, via: s.via ?? null,
+      dropped: gate.dropped(s.id),
     });
   }
   return out;
@@ -361,11 +374,24 @@ onmessage = (ev: MessageEvent<MainToWorker>) => {
       addSubscription(m.id, m.topic, m.msgType, m.qos, m.decoder, m.options ?? {}, true);
       break;
     case 'unsubscribe':
+      gate.release(m.id);
       if (subscriptions.delete(m.id)) sendControl({ op: 'unsubscribe', id: m.id });
       break;
     case 'options': {
       const s = subscriptions.get(m.id);
-      if (s) s.options = { ...s.options, ...m.options };
+      if (!s) break;
+      const wasLatestOnly = s.options.latestOnly === true;
+      s.options = { ...s.options, ...m.options };
+      if (wasLatestOnly && s.options.latestOnly !== true) {
+        const deferred = gate.drain(m.id);
+        if (deferred) decodeAndPost(s, deferred);
+      }
+      break;
+    }
+    case 'ack': {
+      const s = subscriptions.get(m.id);
+      const deferred = gate.ack(m.id, m.seq);
+      if (s && deferred) decodeAndPost(s, deferred);
       break;
     }
     case 'list_topics':

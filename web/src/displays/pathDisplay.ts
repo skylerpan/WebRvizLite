@@ -81,7 +81,10 @@ export class PathDisplay extends MessageFilterDisplayBase<DataMessage> {
     this.poseStyle.onChange(() => this.updatePoseStyle());
     this.color.onChange(() => this.updateMaterial());
     this.alpha.onChange(() => this.updateMaterial());
-    this.bufferLength.onChange(() => this.resizeBuffer());
+    this.bufferLength.onChange(() => {
+      this.resizeBuffer();
+      this.updateDecoderOptions();
+    });
     this.offset.onChange(() => this.updateOffset());
     for (const p of [this.poseAxesLength, this.poseAxesRadius, this.poseArrowColor, this.poseArrowShaftLength, this.poseArrowHeadLength, this.poseArrowShaftDiameter, this.poseArrowHeadDiameter]) {
       p.onChange(() => this.redrawAll());
@@ -171,6 +174,10 @@ export class PathDisplay extends MessageFilterDisplayBase<DataMessage> {
       s.arrows.setColor(c.r, c.g, c.b, this.alpha.value());
       s.arrows.set(n, d.positions, d.orientations, this.poseArrowShaftLength.value(), this.poseArrowShaftDiameter.value() / 2, this.poseArrowHeadLength.value(), this.poseArrowHeadDiameter.value() / 2);
     }
+  }
+
+  protected override latestOnly() {
+    return this.bufferLength.value() === 1;
   }
 
   processMessage(msg: DataMessage) {

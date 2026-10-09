@@ -85,6 +85,7 @@ export class PointCloudCommon {
       for (const c of [...this.clouds, ...this.pool]) if (on) host.makePickable(c.object); else host.releasePickable(c.object);
     });
     this.style.onChange(() => this.updateStyle());
+    this.decayTime.onChange(() => host.pushDecoderOptions());
     this.sizeMeters.onChange(() => this.updateStyle());
     this.sizePixels.onChange(() => this.updateStyle());
     this.alpha.onChange(() => this.updateStyle());

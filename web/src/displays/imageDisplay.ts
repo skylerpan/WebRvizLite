@@ -95,6 +95,10 @@ export class ImageDisplay extends RosTopicDisplayBase<DataMessage> {
     if (this.panelOpen) this.context?.panels()?.setPanelTitle(this.panelId, name);
   }
 
+  protected override latestOnly() {
+    return true;
+  }
+
   processMessage(msg: DataMessage) {
     const d = msg.data as ImageMsg;
     this.setStatus('ok', 'Image', `${d.width} x ${d.height} ${d.encoding}`);
