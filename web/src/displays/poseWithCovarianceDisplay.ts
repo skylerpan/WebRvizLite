@@ -7,7 +7,7 @@ import type { DataMessage } from '../worker/messages';
 import type { PoseCovMsg } from '../worker/decoders';
 import { Arrow, Axes } from '../render/primitives';
 import { PoseShapeProps } from '../render/poseShape';
-import { CovarianceVisual } from '../render/covarianceVisual';
+import { CovarianceVisuals } from '../render/covarianceVisual';
 import { CovariancePropertyImpl } from './covarianceProperty';
 import { boxAround, roQuaternion, roString, roVector, selectionGroup, setQuaternion, setVector } from './selectionInfo';
 import type { PickHit } from '../render/picking';
@@ -25,7 +25,7 @@ export class PoseWithCovarianceDisplay extends MessageFilterDisplayBase<DataMess
   readonly covariance: CovariancePropertyImpl;
   private arrow: Arrow | null = null;
   private axes: Axes | null = null;
-  private covVisual: CovarianceVisual | null = null;
+  private covs: CovarianceVisuals | null = null;
   private last: PoseCovMsg | null = null;
 
   constructor() {
@@ -42,14 +42,14 @@ export class PoseWithCovarianceDisplay extends MessageFilterDisplayBase<DataMess
   protected override onInitialize() {
     this.arrow = new Arrow();
     this.axes = new Axes();
-    this.covVisual = new CovarianceVisual();
-    this.sceneNode.add(this.arrow, this.axes, this.covVisual);
+    this.covs = new CovarianceVisuals();
+    this.sceneNode.add(this.arrow, this.axes, this.covs);
     this.makePickable(this.sceneNode);
     this.redraw();
   }
 
   private redraw() {
-    if (!this.arrow || !this.axes || !this.covVisual) return;
+    if (!this.arrow || !this.axes || !this.covs) return;
     const d = this.last;
     this.shape.applyTo(this.arrow, this.axes, d !== null);
     if (d) {
@@ -57,9 +57,11 @@ export class PoseWithCovarianceDisplay extends MessageFilterDisplayBase<DataMess
       this.arrow.quaternion.set(d.orientations[0], d.orientations[1], d.orientations[2], d.orientations[3]);
       this.axes.position.copy(this.arrow.position);
       this.axes.quaternion.copy(this.arrow.quaternion);
-      this.covVisual.set(d, this.covariance.style());
+      this.covs.begin();
+      this.covs.push(d, this.covariance.style());
+      this.covs.end();
     } else {
-      this.covVisual.hide();
+      this.covs.hide();
     }
   }
 
@@ -114,7 +116,7 @@ export class PoseWithCovarianceDisplay extends MessageFilterDisplayBase<DataMess
   override dispose() {
     this.arrow?.dispose();
     this.axes?.dispose();
-    this.covVisual?.dispose();
+    this.covs?.dispose();
     super.dispose();
   }
 }

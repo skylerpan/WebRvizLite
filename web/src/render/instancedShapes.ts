@@ -9,9 +9,16 @@
 import * as THREE from 'three/webgpu';
 import { cross, instancedBufferAttribute, positionLocal } from 'three/tsl';
 
+export interface InstancedShapesOptions {
+  /** Default true; translucent overlays (covariance) use false so they do not occlude each other. */
+  depthWrite?: boolean;
+  /** Default FrontSide. */
+  side?: THREE.Side;
+}
+
 export class InstancedShapes extends THREE.Group {
   private mesh: THREE.Mesh | null = null;
-  private readonly material = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: true });
+  private readonly material: THREE.MeshBasicNodeMaterial;
   private positions!: THREE.InstancedBufferAttribute;
   private quaternions!: THREE.InstancedBufferAttribute;
   private scales!: THREE.InstancedBufferAttribute;
@@ -21,8 +28,9 @@ export class InstancedShapes extends THREE.Group {
   /** Caller-defined owner per instance (e.g. the marker entry), for selection. */
   private tags: unknown[] = [];
 
-  constructor(private readonly base: THREE.BufferGeometry, initial = 64) {
+  constructor(private readonly base: THREE.BufferGeometry, initial = 64, options: InstancedShapesOptions = {}) {
     super();
+    this.material = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: options.depthWrite ?? true, side: options.side ?? THREE.FrontSide });
     this.allocate(initial);
   }
 

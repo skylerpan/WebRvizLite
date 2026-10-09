@@ -1,7 +1,7 @@
 /**
  * rviz_default_plugins/Odometry (odometry_display.cpp): keeps the last `Keep`
  * poses that moved more than the tolerances, drawn as instanced arrows or axes
- * plus one covariance visual each. The arrow/axes sizes are children of Shape.
+ * plus batched covariance visuals. The arrow/axes sizes are children of Shape.
  */
 
 import * as THREE from 'three/webgpu';
@@ -12,7 +12,7 @@ import type { DataMessage } from '../worker/messages';
 import type { PoseCovMsg } from '../worker/decoders';
 import { InstancedArrows, InstancedAxes } from '../render/instanced';
 import { PoseShapeProps } from '../render/poseShape';
-import { CovarianceVisual } from '../render/covarianceVisual';
+import { CovarianceVisuals } from '../render/covarianceVisual';
 import { CovariancePropertyImpl } from './covarianceProperty';
 import { addPoseRows, boxAround, selectionGroup } from './selectionInfo';
 import type { PickHit } from '../render/picking';
@@ -37,7 +37,7 @@ export class OdometryDisplay extends MessageFilterDisplayBase<DataMessage> {
   private axes: InstancedAxes | null = null;
   /** Kept messages, oldest first. */
   private readonly history: PoseCovMsg[] = [];
-  private readonly covVisuals: CovarianceVisual[] = [];
+  private covs: CovarianceVisuals | null = null;
   private positions = new Float32Array(0);
   private orientations = new Float32Array(0);
   private lastUsed: PoseCovMsg | null = null;
@@ -50,7 +50,10 @@ export class OdometryDisplay extends MessageFilterDisplayBase<DataMessage> {
     this.keep = new IntPropertyImpl('Keep', 100, this, { description: 'Number of arrows to keep before removing the oldest.  0 means keep all of them.', min: 0 });
     this.shape = new PoseShapeProps(this, () => this.redraw(), { sizesUnderShape: true });
     this.covariance = new CovariancePropertyImpl(this, () => this.redraw(), () => this.updateDecoderOptions());
-    this.keep.onChange(() => this.trim());
+    this.keep.onChange(() => {
+      this.trim();
+      this.redraw();
+    });
   }
 
   protected override decoderOptions() {
@@ -60,7 +63,8 @@ export class OdometryDisplay extends MessageFilterDisplayBase<DataMessage> {
   protected override onInitialize() {
     this.arrows = new InstancedArrows();
     this.axes = new InstancedAxes();
-    this.sceneNode.add(this.arrows, this.axes);
+    this.covs = new CovarianceVisuals();
+    this.sceneNode.add(this.arrows, this.axes, this.covs);
     this.makePickable(this.sceneNode);
     this.redraw();
   }
@@ -105,11 +109,10 @@ export class OdometryDisplay extends MessageFilterDisplayBase<DataMessage> {
   private trim() {
     const cap = this.keep.value() > 0 ? this.keep.value() : UNLIMITED_CAP;
     while (this.history.length > cap) this.history.shift();
-    this.redraw();
   }
 
   private redraw() {
-    if (!this.arrows || !this.axes) return;
+    if (!this.arrows || !this.axes || !this.covs) return;
     const n = this.history.length;
     if (this.positions.length < n * 3) {
       this.positions = new Float32Array(Math.max(n * 3, this.positions.length * 2, 48));
@@ -126,18 +129,11 @@ export class OdometryDisplay extends MessageFilterDisplayBase<DataMessage> {
     this.arrows.setColor(c.r, c.g, c.b, s.alpha.value());
     this.arrows.set(n, this.positions, this.orientations, s.shaftLength.value(), s.shaftRadius.value(), s.headLength.value(), s.headRadius.value());
     this.axes.set(n, this.positions, this.orientations, s.axesLength.value(), s.axesRadius.value());
-    // One covariance visual per kept pose; pooled.
+    // Covariance visuals for every kept pose, in three instanced pools.
     const style = this.covariance.style();
-    const show = style.position.enabled || style.orientation.enabled;
-    while (this.covVisuals.length < n && show) {
-      const v = new CovarianceVisual();
-      this.sceneNode.add(v);
-      this.covVisuals.push(v);
-    }
-    for (let i = 0; i < this.covVisuals.length; i++) {
-      if (i < n && show) this.covVisuals[i].set(this.history[i], style);
-      else this.covVisuals[i].hide();
-    }
+    this.covs.begin();
+    if (style.position.enabled || style.orientation.enabled) for (let i = 0; i < n; i++) this.covs.push(this.history[i], style);
+    this.covs.end();
   }
 
   override describeSelection(hit: PickHit): Property | null {
@@ -163,7 +159,7 @@ export class OdometryDisplay extends MessageFilterDisplayBase<DataMessage> {
   override dispose() {
     this.arrows?.dispose();
     this.axes?.dispose();
-    for (const v of this.covVisuals) v.dispose();
+    this.covs?.dispose();
     super.dispose();
   }
 }
