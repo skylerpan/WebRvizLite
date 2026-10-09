@@ -38,7 +38,7 @@ Frame Rate 在三個設定檔都是 rviz 預設的 30，所以 FPS 固定在 29�
 | E | Tier 1 | `tier1_scene.rviz`，Camera display `Enabled: false` | WS + WT | 單獨看 Camera 第二 renderer |
 | A2 / B2 | Tier 0 / Tier 1 | 同 A，TF display `Enabled: false` | WS | 排除 mock TF frame 數不同的影響 |
 
-mock 資料率（兩版相同的 topic）：`/points` 300k 點 @10 Hz、`/scan` 10 Hz、`/livox/lidar` 10 Hz、`/markers` 5,016 marker @1 Hz、`/tf` 30 Hz、`/clock` 50 Hz。Tier 1 mock 另加 `/odom` 20 Hz、`/range` 10 Hz、`/footprint` 5 Hz、`/camera/image_raw` 640×480 ~4 Hz、`/camera/depth/image_raw` 5 Hz、`/amcl_pose`、`/grid_cells`、`/clicked_point_echo` 等。Tier 1 mock 的 TF tree 有 11 個 frame，Tier 0 mock 只有 5 個（B/C 的 TF display 因此多畫 36 個物件；A2/B2 排除這點）。
+mock 資料率（兩版相同的 topic）：`/points` 300k 點 @10 Hz、`/scan` 10 Hz、`/livox/lidar` 10 Hz、`/markers` 5,016 marker @1 Hz、`/tf` 30 Hz、`/clock` 50 Hz（前端收到的是 server 每 100 ms 一次的 clock 控制訊息）。Tier 1 mock 另加 `/odom` 20 Hz、`/range` 10 Hz、`/footprint` 5 Hz、`/camera/image_raw` 160×120 ~4 Hz、`/camera/depth/image_raw` 160×120 5 Hz（mock 相機解析度見 `crates/bridge/src/mock.rs` `CAM_W/CAM_H`）、`/amcl_pose`、`/grid_cells`、`/clicked_point_echo` 等。Tier 1 mock 的 TF tree 有 11 個 frame，Tier 0 mock 只有 5 個（B/C 的 TF display 因此多畫 36 個物件；A2/B2 排除這點）。
 
 ### 取樣
 

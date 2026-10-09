@@ -42,6 +42,9 @@ Server starts but the browser cannot connect, or the UI is stale? See
 [`docs/running.md`](docs/running.md).
 Known problems that are traced but not fixed yet? See
 [`docs/todo.md`](docs/todo.md).
+Performance of Tier 1 vs Tier 0? Measurements in
+[`docs/perf-tier1-vs-tier0.md`](docs/perf-tier1-vs-tier0.md), code-level analysis in
+[`docs/perf-static-analysis.md`](docs/perf-static-analysis.md).
 
 Open <http://127.0.0.1:8765>. `--mock` serves a synthetic scene (`/scan` 10 Hz,
 `/livox/lidar` 10 Hz, `/tf` 30 Hz, `/tf_static`, `/clock`) and needs no ROS. Append `?debug` to open
