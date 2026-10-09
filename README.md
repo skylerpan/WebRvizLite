@@ -4,7 +4,7 @@ ROS 2 visualization in the browser, modelled on RViz 2 (lyrical, rviz2 15.2.6):
 same panels, property names, defaults and `.rviz` config format. Rendering is
 three.js (WebGPU with WebGL2 fallback) and only chases performance.
 
-![WebRvizLite showing the built-in mock scene: map, path, laser scan, a 300k-point cloud and markers, with orbit drag and wheel zoom](docs/media/overview.gif)
+![WebRvizLite showing the built-in mock scene: map, robot model, path, laser scan, a 300k-point cloud and markers, with orbit drag and wheel zoom](docs/media/overview.gif)
 
 *`make mock-rust`: the mock scene with no ROS 2 installed. Left drag orbits, wheel zooms, `Z` resets the view.*
 
@@ -190,7 +190,7 @@ Not in Tier 1: the Interact tool and InteractiveMarkers, compressed image
 transports, Description File picking through a file dialog (the property is a
 plain path string).
 
-![Topic debug panel with per-topic Hz and byte rates, and the perf counters in the status bar](docs/media/debug-panel.gif)
+![Topic debug panel with per-topic Hz, byte rates, dropped frames and transport, and the perf counters in the status bar](docs/media/debug-panel.gif)
 
 *`?debug&perf`: subscribe to topics by hand and watch receive rates; the status bar shows per-display frame times.*
 
