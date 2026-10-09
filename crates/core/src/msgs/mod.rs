@@ -7,6 +7,8 @@ pub mod geometry;
 pub mod marker;
 pub mod nav;
 pub mod pointcloud;
+pub mod sensor;
+pub mod std_msgs;
 pub mod tf;
 
 pub use common::{Header, Stamp};

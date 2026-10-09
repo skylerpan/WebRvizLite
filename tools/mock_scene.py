@@ -6,9 +6,12 @@ through a real ROS 2 node (rclpy), so the r2r bridge path (DDS → subscribe_raw
 Mirrors crates/bridge/src/mock.rs: an 8 m × 6 m room with a pillar, a robot
 driving a 2 m circle, and every topic `fixtures/mock_scene.rviz` subscribes to:
 
-  /tf 30 Hz · /tf_static · /clock 20 Hz · /scan 10 Hz · /map (latched) ·
+  /tf 30 Hz · /tf_static · /clock 50 Hz · /scan 10 Hz · /map (latched) ·
   /plan, /goal_pose, /particlecloud 2 Hz · /points 10 Hz (PointCloud2) ·
-  /markers, /marker 1 Hz · /livox/lidar 10 Hz (livox_ros_driver2/CustomMsg)
+  /markers, /marker 1 Hz · /livox/lidar 10 Hz (livox_ros_driver2/CustomMsg) ·
+  Tier 1: /odom 20 Hz · /amcl_pose, /grid_cells 1 Hz · /clicked_point_echo 2 Hz ·
+  /footprint 5 Hz · /range 10 Hz · /robot_description (latched URDF) ·
+  /camera/image_raw, /camera/depth/image_raw, /camera/camera_info 5 Hz
 
 Sizes default smaller than the Rust mock because rclpy serialises in Python:
 --points 100000, --cubes 5000, --livox-points 4000.
@@ -19,18 +22,19 @@ import argparse
 import array
 import math
 import time
+from pathlib import Path
 
 import numpy as np
 import rclpy
 from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import Point, Pose, PoseArray, PoseStamped, TransformStamped
+from geometry_msgs.msg import Point, Point32, PointStamped, Polygon, PolygonStamped, Pose, PoseArray, PoseStamped, PoseWithCovarianceStamped, TransformStamped
 from livox_ros_driver2.msg import CustomMsg, CustomPoint
-from nav_msgs.msg import OccupancyGrid, Path
+from nav_msgs.msg import GridCells, OccupancyGrid, Odometry, Path
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rosgraph_msgs.msg import Clock
-from sensor_msgs.msg import LaserScan, PointCloud2, PointField
-from std_msgs.msg import ColorRGBA
+from sensor_msgs.msg import CameraInfo, Image, LaserScan, PointCloud2, PointField, Range
+from std_msgs.msg import ColorRGBA, String
 from tf2_msgs.msg import TFMessage
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -115,6 +119,16 @@ class MockScene(Node):
         self.markers_pub = self.create_publisher(MarkerArray, '/markers', 2)
         self.marker_pub = self.create_publisher(Marker, '/marker', 2)
         self.livox_pub = self.create_publisher(CustomMsg, '/livox/lidar', sensor_qos)
+        self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
+        self.amcl_pub = self.create_publisher(PoseWithCovarianceStamped, '/amcl_pose', 2)
+        self.point_pub = self.create_publisher(PointStamped, '/clicked_point_echo', 2)
+        self.footprint_pub = self.create_publisher(PolygonStamped, '/footprint', 2)
+        self.grid_cells_pub = self.create_publisher(GridCells, '/grid_cells', 2)
+        self.range_pub = self.create_publisher(Range, '/range', 10)
+        self.urdf_pub = self.create_publisher(String, '/robot_description', latched)
+        self.image_pub = self.create_publisher(Image, '/camera/image_raw', sensor_qos)
+        self.depth_pub = self.create_publisher(Image, '/camera/depth/image_raw', sensor_qos)
+        self.camera_info_pub = self.create_publisher(CameraInfo, '/camera/camera_info', 2)
 
         self.n_points = int(math.sqrt(n_points)) ** 2
         self.n_cubes = n_cubes
@@ -124,17 +138,34 @@ class MockScene(Node):
         self._prepare_livox()
 
         stamp = self.now()
+        optical = TransformStamped()
+        optical.header.stamp, optical.header.frame_id, optical.child_frame_id = stamp, 'camera_link', 'camera_optical_frame'
+        optical.transform.rotation.x, optical.transform.rotation.y, optical.transform.rotation.z, optical.transform.rotation.w = -0.5, 0.5, -0.5, 0.5
         self.tf_static_pub.publish(TFMessage(transforms=[
+            tf(stamp, 'base_footprint', 'base_link', 0.0, 0.0, 0.0),
+            tf(stamp, 'base_link', 'wheel_left_link', 0.0, 0.28, 0.127),
+            tf(stamp, 'base_link', 'wheel_right_link', 0.0, -0.28, 0.127),
+            tf(stamp, 'base_link', 'caster_front_link', 0.22, 0.0, 0.05),
+            tf(stamp, 'base_link', 'camera_link', 0.28, 0.0, 0.4),
+            optical,
             tf(stamp, 'base_link', 'laser', 0.2, 0.0, 0.3),
             tf(stamp, 'base_link', 'livox_frame', 0.0, 0.0, LIVOX_HEIGHT),
         ]))
+        urdf = Path(__file__).resolve().parent.parent / 'fixtures' / 'robot_description' / 'tier1_robot.urdf'
+        self.urdf_pub.publish(String(data=urdf.read_text()))
         self.map_pub.publish(self.make_map(stamp))
 
         self.create_timer(1 / 30, self.publish_tf)
-        self.create_timer(1 / 20, self.publish_clock)
+        self.create_timer(1 / 50, self.publish_clock)
         self.create_timer(0.1, self.publish_fast)
         self.create_timer(0.5, self.publish_nav)
         self.create_timer(1.0, self.publish_markers)
+        self.create_timer(0.05, self.publish_odom)
+        self.create_timer(0.1, self.publish_range)
+        self.create_timer(0.2, self.publish_footprint)
+        self.create_timer(0.5, self.publish_point)
+        self.create_timer(1.0, self.publish_covariance_and_cells)
+        self.create_timer(0.2, self.publish_camera)
         self.get_logger().info(
             f'publishing mock scene: /points {self.n_points} pts, /markers {n_cubes} cubes, /livox/lidar {n_livox} pts')
 
@@ -152,7 +183,7 @@ class MockScene(Node):
     def publish_tf(self):
         x, y, yaw = self.pose()
         stamp = self.now()
-        self.tf_pub.publish(TFMessage(transforms=[tf(stamp, 'map', 'odom', 0.0, 0.0, 0.0), tf(stamp, 'odom', 'base_link', x, y, 0.0, yaw)]))
+        self.tf_pub.publish(TFMessage(transforms=[tf(stamp, 'map', 'odom', 0.0, 0.0, 0.0), tf(stamp, 'odom', 'base_footprint', x, y, 0.0, yaw)]))
 
     def publish_clock(self):
         self.clock_pub.publish(Clock(clock=self.now()))
@@ -302,6 +333,141 @@ class MockScene(Node):
             r = 0.05 + 0.25 * i / 60
             pa.poses.append(pose_msg(x + r * math.cos(a), y + r * math.sin(a), yaw + 0.3 * math.sin(a * 0.5)))
         self.particles_pub.publish(pa)
+
+    # ---- Tier 1 topics ------------------------------------------------------
+
+    @staticmethod
+    def covariance(diag, xy=0.0):
+        cov = [0.0] * 36
+        for i, v in enumerate(diag):
+            cov[i * 6 + i] = float(v)
+        cov[1] = cov[6] = float(xy)
+        return cov
+
+    def publish_odom(self):
+        x, y, yaw = self.pose()
+        m = Odometry()
+        m.header.stamp, m.header.frame_id, m.child_frame_id = self.now(), 'odom', 'base_link'
+        m.pose.pose = pose_msg(x, y, yaw)
+        m.pose.covariance = self.covariance([0.02, 0.02, 0, 0, 0, 0.01])
+        m.twist.twist.linear.x = CIRCLE_RADIUS * math.tau / CIRCLE_PERIOD_S
+        m.twist.twist.angular.z = math.tau / CIRCLE_PERIOD_S
+        m.twist.covariance = self.covariance([0.001] * 6)
+        self.odom_pub.publish(m)
+
+    def publish_range(self):
+        x, y, yaw = self.pose()
+        m = Range()
+        m.header.stamp, m.header.frame_id = self.now(), 'laser'
+        m.radiation_type, m.field_of_view, m.min_range, m.max_range = Range.ULTRASOUND, 0.5, 0.05, 4.0
+        m.range = float(min(4.0, ray_to_walls(x + 0.2 * math.cos(yaw), y + 0.2 * math.sin(yaw), yaw)))
+        self.range_pub.publish(m)
+
+    def publish_footprint(self):
+        m = PolygonStamped()
+        m.header.stamp, m.header.frame_id = self.now(), 'base_link'
+        pts = [(0.30, 0.20), (0.25, 0.25), (-0.25, 0.25), (-0.30, 0.20), (-0.30, -0.20), (-0.25, -0.25), (0.25, -0.25), (0.30, -0.20)]
+        m.polygon = Polygon(points=[Point32(x=float(px), y=float(py), z=0.0) for px, py in pts])
+        self.footprint_pub.publish(m)
+
+    def publish_point(self):
+        x, y, yaw = self.pose()
+        a = yaw - math.pi / 2 + math.pi
+        t = time.monotonic() * 0.6
+        m = PointStamped()
+        m.header.stamp, m.header.frame_id = self.now(), 'map'
+        m.point = point(CIRCLE_RADIUS * math.cos(a) + 0.5 * math.cos(t), CIRCLE_RADIUS * math.sin(a) + 0.5 * math.sin(t), 0.3 + 0.1 * math.sin(2 * t))
+        self.point_pub.publish(m)
+
+    def publish_covariance_and_cells(self):
+        x, y, yaw = self.pose()
+        stamp = self.now()
+        wobble = math.sin(self.phase * 0.07) * 0.05
+        m = PoseWithCovarianceStamped()
+        m.header.stamp, m.header.frame_id = stamp, 'map'
+        m.pose.pose = pose_msg(x + wobble, y - wobble, yaw + 0.05 * wobble)
+        m.pose.covariance = self.covariance([0.05, 0.08, 0.01, 0.01, 0.02, 0.05], 0.02)
+        self.amcl_pub.publish(m)
+
+        g = GridCells()
+        g.header.stamp, g.header.frame_id = stamp, 'map'
+        g.cell_width = g.cell_height = 0.1
+        r0 = 1.0 + 0.3 * math.sin(time.monotonic() * 0.5)
+        for i in range(-20, 20):
+            for j in range(-20, 20):
+                cx, cy = i * 0.1 + 0.05, j * 0.1 + 0.05
+                d = math.hypot(cx, cy)
+                if r0 <= d < r0 + 0.25:
+                    g.cells.append(Point32(x=cx, y=cy, z=0.0))
+        self.grid_cells_pub.publish(g)
+
+    CAM_W, CAM_H, CAM_F = 160, 120, 120.0
+
+    def publish_camera(self):
+        """Ray-casts the room from base_link + (0.28, 0, 0.4) looking along +x (see mock.rs)."""
+        stamp = self.now()
+        x, y, yaw = self.pose()
+        W, H, F = self.CAM_W, self.CAM_H, self.CAM_F
+        cam_x, cam_y, cam_z = x + 0.28 * math.cos(yaw), y + 0.28 * math.sin(yaw), 0.4
+        u = (np.arange(W)[None, :] + 0.5 - W / 2) / F
+        v = (np.arange(H)[:, None] + 0.5 - H / 2) / F
+        norm = np.sqrt(u * u + v * v + 1.0)
+        fwd, left, up = 1.0 / norm, -u / norm, -v / norm
+        wx = fwd * math.cos(yaw) - left * math.sin(yaw)
+        wy = fwd * math.sin(yaw) + left * math.cos(yaw)
+        wz = up * np.ones_like(wx)
+        t = np.full((H, W), np.inf)
+        rgb = np.zeros((H, W, 3), np.uint8)
+        rgb[:] = (40, 40, 48)
+        floor = wz < -1e-6
+        tf_ = np.where(floor, -cam_z / np.where(floor, wz, 1.0), np.inf)
+        hx, hy = cam_x + wx * tf_, cam_y + wy * tf_
+        check = ((np.floor(hx) + np.floor(hy)) % 2) == 0
+        t = np.where(floor, tf_, t)
+        rgb[floor & check] = (200, 200, 200)
+        rgb[floor & ~check] = (150, 150, 160)
+        ceil = wz > 1e-6
+        t = np.where(ceil, (ROOM_CEILING - cam_z) / np.where(ceil, wz, 1.0), t)
+        rgb[ceil] = (70, 70, 80)
+        horiz = np.sqrt(wx * wx + wy * wy)
+        dist = ray_to_walls(cam_x, cam_y, np.arctan2(wy, wx))
+        tw = dist / np.maximum(horiz, 1e-9)
+        wall = tw < t
+        hx, hy = cam_x + wx * tw, cam_y + wy * tw
+        stripe = (np.floor((hx + hy) * 2.0) % 2) == 0
+        t = np.where(wall, tw, t)
+        rgb[wall & stripe] = (120, 150, 200)
+        rgb[wall & ~stripe] = (90, 110, 160)
+        px, py, pr = 2.5, -1.5, 0.3
+        ox, oy = cam_x - px, cam_y - py
+        b = ox * wx + oy * wy
+        c = ox * ox + oy * oy - pr * pr
+        disc = b * b - c * horiz * horiz
+        with np.errstate(invalid='ignore'):
+            tp = (-b - np.sqrt(np.where(disc > 0, disc, 0))) / np.maximum(horiz * horiz, 1e-12)
+        hit = (disc > 0) & (tp > 0) & (tp < t) & (cam_z + wz * tp <= 1.2)
+        t = np.where(hit, tp, t)
+        rgb[hit] = (200, 90, 60)
+        depth_mm = np.where(np.isfinite(t), np.minimum(t * fwd * 1000.0, 65535.0), 0).astype(np.uint16)
+
+        img = Image()
+        img.header.stamp, img.header.frame_id = stamp, 'camera_optical_frame'
+        img.height, img.width, img.encoding, img.is_bigendian, img.step = H, W, 'rgb8', 0, W * 3
+        img.data = rgb.tobytes()
+        self.image_pub.publish(img)
+        dep = Image()
+        dep.header.stamp, dep.header.frame_id = stamp, 'camera_optical_frame'
+        dep.height, dep.width, dep.encoding, dep.is_bigendian, dep.step = H, W, '16UC1', 0, W * 2
+        dep.data = depth_mm.astype('<u2').tobytes()
+        self.depth_pub.publish(dep)
+        ci = CameraInfo()
+        ci.header.stamp, ci.header.frame_id = stamp, 'camera_optical_frame'
+        ci.height, ci.width, ci.distortion_model = H, W, 'plumb_bob'
+        ci.d = [0.0] * 5
+        ci.k = [F, 0.0, W / 2, 0.0, F, H / 2, 0.0, 0.0, 1.0]
+        ci.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        ci.p = [F, 0.0, W / 2, 0.0, 0.0, F, H / 2, 0.0, 0.0, 0.0, 1.0, 0.0]
+        self.camera_info_pub.publish(ci)
 
     # ---- 1 Hz: markers ------------------------------------------------------
 

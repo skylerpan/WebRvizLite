@@ -49,3 +49,68 @@ decoders that take `fixedFrame` (`decoders.ts`: path / pose_stamped /
 pose_array L88-90, point_cloud2 / laser_scan / livox L126-128, marker /
 marker_array L159-160) and post the `data` message again. Limit this to
 depth-1 / transient-local subscriptions so 10 Hz clouds are not re-sent.
+
+## Tier 1 notes (2026-10-09)
+
+- **WebGPU backend not exercised for the Tier 1 render passes.** The machine
+  this was developed on falls back to WebGL2 (`Renderer: WebGL2` in the status
+  bar), so the colour-ID pick pass (`web/src/render/picking.ts`, float MRT +
+  `readRenderTargetPixelsAsync`) and the Camera display's second renderer were
+  only verified on WebGL2. On WebGPU the pick readback goes through
+  `copyTextureToBuffer`; the row order is handled by the `flipY` branch, but a
+  first run on WebGPU should check one pick against a known object.
+- **Pause and the tf cache.** The Time panel's Pause freezes the tf snapshot at
+  the paused ROS time (`tf_time`). The worker's tf buffer keeps 10 s, so after
+  about 10 s of pause frames start to disappear (lookups at the frozen time fall
+  out of the cache) until Pause is released. RViz behaves the same way with its
+  own buffer; a fix would stop evicting while paused.
+- **Camera display shares GPU data with a second renderer.** three.js clears an
+  attribute's `updateRanges` after the first renderer uploads, so the Camera
+  panel re-uploads whole point-cloud buffers each frame (measured 1.6 ms for the
+  mock scene; grows with cloud size). Rendering the camera view with the main
+  renderer into a render target and blitting to the panel would avoid it.
+- **Camera view refresh rate (deliberate rviz deviation).** rviz redraws the
+  camera render panel every frame; WebRvizLite redraws it when a new image or
+  CameraInfo arrives and otherwise at most `CAMERA_VIEW_MAX_HZ` (15 Hz,
+  `web/src/displays/cameraDisplay.ts`), because the second full scene render
+  was the single largest per-frame cost (`docs/perf-static-analysis.md` §1.1)
+  and the scene has no cheap "changed" signal. Hidden panels are not rendered.
+  Visibility is applied by hiding the unticked displays' scene nodes for the
+  duration of the camera render (three.js layers are not inherited by
+  children and objects added later would miss the bit), which also makes
+  displays inside Groups follow their group's Visibility row.
+- **Picking.** Pick-pass pipelines are compiled on the first pick for every
+  material in the scene; the viewport runs a 1×1 warm-up pick after the first
+  frame and again at frame 90, but a material created later (a new cloud
+  slot, a new marker material, a highlight box) still pays its compile on the
+  next pick. `prepareScene` keeps its full scene traversal: three.js layers
+  are not inherited by children, so a layer or registry scheme would have to
+  track every object added to a display later; the walk is cheap next to the
+  pick render itself.
+- **Select tool and 300k-point boxes.** A box over a dense cloud returns one hit
+  per visible point; the Selection panel is virtualised, but the highlight boxes
+  stop at 2,000 hits (`SelectionManager.MAX_HIGHLIGHTS`).
+- **Image display:** only raw `sensor_msgs/Image` encodings
+  (rgb8/rgba8/bgr8/bgra8/mono8/mono16/8UC1/8UC3/8UC4/16UC1/32FC1);
+  compressed / image_transport is Tier 2.
+
+## Checked against rviz lyrical (2026-10-09)
+
+The Tier 1 details first implemented from memory were compared with the
+`lyrical` sources (`rviz_default_plugins/src/.../{odometry,pose_covariance,range,
+grid_cells,point,polygon,robot_model,robot,image,camera}`,
+`rviz_rendering/.../covariance_visual.cpp`, `rviz_common/.../properties/
+covariance_property.cpp`, the ortho/fps/orbit view controllers, the measure/
+point/pose/select/focus tools, `time_panel.cpp`, `views_panel.cpp`,
+`view_manager.cpp`) and corrected. Remaining deliberate differences:
+
+- **GridCells tiles are square.** rviz draws `cell_width × cell_height` tiles;
+  `CloudObject` has one size per cloud, so the larger of the two is used.
+- **Image YUV encodings (`yuyv`, `uyvy`, `nv12`) are converted but untested
+  against a real camera**; `bayer_*` is shown as raw grey like rviz.
+- **RobotModel `Description File`** is a plain path string (rviz uses a file
+  picker); files are fetched through `/api/mesh`, so they must live under a
+  package share directory or a `--package-path` root.
+- **Link trails (`Show Trail`)** are stored but not drawn.
+- **Camera / Image `Transport Override`** is stored but has no effect
+  (image_transport is Tier 2).

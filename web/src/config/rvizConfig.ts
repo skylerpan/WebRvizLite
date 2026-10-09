@@ -120,7 +120,63 @@ export class RvizConfig {
     this.doc.Panels = panels;
   }
 
+  timePanelState(): TimePanelState {
+    const p = this.panel('rviz_common/Time');
+    return {
+      experimental: typeof p?.Experimental === 'boolean' ? p.Experimental : false,
+      syncMode: typeof p?.SyncMode === 'number' ? p.SyncMode : 0,
+      syncSource: typeof p?.SyncSource === 'string' ? p.SyncSource : '',
+    };
+  }
+
+  setTimePanelState(s: TimePanelState) {
+    const p = this.ensurePanel('rviz_common/Time', 'Time');
+    p.Experimental = s.experimental;
+    p.SyncMode = s.syncMode;
+    p.SyncSource = s.syncSource;
+  }
+
+  /** Adds a `Panels` entry with just Class and Name (Selection has no state of its own). */
+  setPanelPresent(classId: string, name: string) {
+    this.ensurePanel(classId, name);
+  }
+
+  /** Drops entries of the given classes that are not in `openClassIds`; other classes are kept verbatim. */
+  prunePanels(knownClassIds: readonly string[], openClassIds: readonly string[]) {
+    this.doc.Panels = this.panels().filter((p) => typeof p.Class !== 'string' || !knownClassIds.includes(p.Class) || openClassIds.includes(p.Class));
+  }
+
+  private ensurePanel(classId: string, name: string): YamlMap {
+    const panels = this.panels();
+    let p = panels.find((x) => x.Class === classId);
+    if (!p) {
+      p = { Class: classId, Name: name };
+      panels.push(p);
+    }
+    this.doc.Panels = panels;
+    return p;
+  }
+
+  /**
+   * rviz stores each panel's `collapsed` flag under Window Geometry keyed by
+   * title; numeric fields and `QMainWindow State` are kept untouched.
+   */
+  setWindowGeometry(openTitles: readonly string[]) {
+    const wg = { ...this.windowGeometry };
+    for (const t of openTitles) {
+      const prev = wg[t];
+      wg[t] = { ...(isYamlMap(prev) ? prev : {}), collapsed: false };
+    }
+    this.doc['Window Geometry'] = wg;
+  }
+
   raw(): YamlMap {
     return this.doc;
   }
+}
+
+export interface TimePanelState {
+  experimental: boolean;
+  syncMode: number;
+  syncSource: string;
 }

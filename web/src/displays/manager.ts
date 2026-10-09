@@ -11,9 +11,57 @@ import type { Rgb, YamlMap, YamlValue } from '../property/types';
 import type { BridgeClient } from '../worker/client';
 import { DisplayGroupImpl } from './Display';
 import { createDisplayRegistry } from './registry';
-import type { DisplayContext, DisplayRegistry } from './types';
+import type { DisplayContext, DisplayRegistry, ExtraView, PanelHost } from './types';
 import { ViewManager } from '../views/ViewManager';
 import { ToolManager } from '../tools/ToolManager';
+import { PickRegistry } from '../render/picking';
+import { SelectionManager } from '../app/selection';
+
+/**
+ * ROS / wall clock state behind the Time panel (rviz FrameManager pause +
+ * TimePanel elapsed counters). Pausing freezes the ROS time every display and
+ * the tf snapshot see; messages keep arriving (as in rviz).
+ */
+export class TimeState {
+  readonly paused: Accessor<boolean>;
+  private readonly setPausedSignal: (b: boolean) => void;
+  readonly rosTimeNs: Accessor<bigint>;
+  readonly rosStartNs: Accessor<bigint>;
+  readonly wallStartNs: Accessor<bigint>;
+  private readonly setRosStart: (v: bigint) => void;
+  private readonly setWallStart: (v: bigint) => void;
+  private frozenNs = 0n;
+
+  constructor(private readonly bridge: BridgeClient) {
+    [this.paused, this.setPausedSignal] = createSignal(false);
+    [this.rosStartNs, this.setRosStart] = createSignal(0n);
+    [this.wallStartNs, this.setWallStart] = createSignal(0n);
+    const clockNs = () => bridge.clock()?.rosTimeNs ?? 0n;
+    this.rosTimeNs = () => (this.paused() ? this.frozenNs : clockNs());
+    // Elapsed counters start at the first clock message.
+    createEffect(() => {
+      const c = bridge.clock();
+      if (!c) return;
+      untrack(() => {
+        if (this.rosStartNs() === 0n) this.setRosStart(c.rosTimeNs);
+        if (this.wallStartNs() === 0n) this.setWallStart(c.wallTimeNs);
+      });
+    });
+  }
+
+  setPaused(paused: boolean) {
+    if (paused === this.paused()) return;
+    if (paused) this.frozenNs = this.bridge.clock()?.rosTimeNs ?? 0n;
+    this.setPausedSignal(paused);
+    this.bridge.setTfTime(paused ? this.frozenNs : 0n);
+  }
+
+  resetElapsed() {
+    const c = this.bridge.clock();
+    this.setRosStart(c?.rosTimeNs ?? 0n);
+    this.setWallStart(c?.wallTimeNs ?? 0n);
+  }
+}
 
 export class VisualizationManager {
   readonly registry: DisplayRegistry;
@@ -28,8 +76,13 @@ export class VisualizationManager {
   readonly context: DisplayContext;
   readonly views: ViewManager;
   readonly tools: ToolManager;
-  /** ROS time from the server clock, ns. */
+  readonly picking = new PickRegistry();
+  readonly selection = new SelectionManager();
+  readonly extraViews = new Set<ExtraView>();
+  private panelHost: PanelHost | null = null;
+  /** ROS time from the server clock, ns (frozen while the Time panel is paused). */
   readonly rosTimeNs: Accessor<bigint>;
+  readonly time: TimeState;
   private lastRosNs = 0n;
 
   constructor(readonly scene: THREE.Scene, readonly bridge: BridgeClient) {
@@ -53,15 +106,19 @@ export class VisualizationManager {
     });
     this.globalStatus = new StatusListPropertyImpl('Global Status', this.root);
 
-    this.rosTimeNs = () => {
-      const c = bridge.clock();
-      return c ? c.rosTimeNs : 0n;
+    this.time = new TimeState(bridge);
+    this.rosTimeNs = this.time.rosTimeNs;
+    this.context = {
+      scene, bridge, fixedFrame, tf: bridge.tf, rosTimeNs: this.rosTimeNs, picking: this.picking,
+      panels: () => this.panelHost, rootDisplays: () => this.root.displays(), extraViews: this.extraViews,
     };
-    this.context = { scene, bridge, fixedFrame, tf: bridge.tf, rosTimeNs: this.rosTimeNs };
+    scene.add(this.selection.highlight);
 
     this.views = new ViewManager({ tf: bridge.tf, fixedFrame });
     scene.add(this.views.helpers);
-    this.tools = new ToolManager({ views: this.views, bridge, fixedFrame });
+    this.views.helpers.userData.noPick = true;
+    this.views.helpers.userData.mainViewOnly = true;
+    this.tools = new ToolManager({ views: this.views, bridge, fixedFrame, rosTimeNs: this.rosTimeNs, selection: this.selection });
 
     this.fixedFrameProperty.onChange((v) => {
       const frame = stripLeadingSlash(v);
@@ -93,6 +150,11 @@ export class VisualizationManager {
     else this.globalStatus.setStatus('ok', 'Fixed Frame', 'OK');
   }
 
+  /** The dockview layout, once mounted (displays open their panels through it). */
+  setPanelHost(host: PanelHost | null) {
+    this.panelHost = host;
+  }
+
   background(): Rgb {
     return this.backgroundColor.value();
   }
@@ -103,8 +165,11 @@ export class VisualizationManager {
     const rosDt = this.lastRosNs && ros ? Number(ros - this.lastRosNs) / 1e9 : wallDt;
     this.lastRosNs = ros;
     this.updateFixedFrameStatusIfChanged();
+    // Apply the messages received since the last frame (latest-only delivery, see worker/delivery.ts).
+    this.bridge.flushPending();
     this.views.update(wallDt);
     this.root.update(wallDt, rosDt);
+    this.selection.update();
   }
 
   private lastStatusKey = '';

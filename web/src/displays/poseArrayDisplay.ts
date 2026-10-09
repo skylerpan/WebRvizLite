@@ -6,6 +6,11 @@ import type { DisplayClassInfo } from './types';
 import type { DataMessage } from '../worker/messages';
 import type { PosesMsg } from '../worker/decoders';
 import { FlatArrows, InstancedArrows, InstancedAxes } from '../render/instanced';
+import { addPoseRows, boxAround, selectionGroup } from './selectionInfo';
+import type { PickHit } from '../render/picking';
+import type * as THREE from 'three/webgpu';
+import type { Property } from '../property/types';
+
 
 export const POSE_ARRAY_INFO: DisplayClassInfo = {
   classId: 'rviz_default_plugins/PoseArray',
@@ -53,7 +58,24 @@ export class PoseArrayDisplay extends MessageFilterDisplayBase<DataMessage> {
     this.arrows3d = new InstancedArrows();
     this.axes = new InstancedAxes();
     this.sceneNode.add(this.flat, this.arrows3d, this.axes);
+    this.makePickable(this.sceneNode);
     this.updateShape();
+  }
+
+  override describeSelection(hit: PickHit): Property | null {
+    const d = this.last;
+    if (!d || hit.instance >= d.count) return null;
+    const g = selectionGroup(`Pose ${hit.instance} [${this.name()}]`);
+    addPoseRows(g, d.positions, d.orientations, hit.instance);
+    return g;
+  }
+  override selectionBounds(hit: PickHit, out: THREE.Box3): boolean {
+    const d = this.last;
+    if (!d || hit.instance >= d.count) return false;
+    const i = hit.instance;
+    const s = this.shape.value();
+    const len = s === 'Arrow (Flat)' ? this.arrowLength.value() : s === 'Arrow (3D)' ? this.shaftLength.value() + this.headLength.value() : this.axesLength.value();
+    return boxAround(out, { x: d.positions[i * 3], y: d.positions[i * 3 + 1], z: d.positions[i * 3 + 2] }, len);
   }
 
   private updateShape() {
@@ -94,6 +116,10 @@ export class PoseArrayDisplay extends MessageFilterDisplayBase<DataMessage> {
       this.axes.setOpacity(this.alpha.value());
       this.axes.set(n, d.positions, d.orientations, this.axesLength.value(), this.axesRadius.value());
     }
+  }
+
+  protected override latestOnly() {
+    return true;
   }
 
   processMessage(msg: DataMessage) {

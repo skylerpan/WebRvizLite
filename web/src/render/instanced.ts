@@ -4,7 +4,12 @@
  */
 
 import * as THREE from 'three/webgpu';
+import { depth, float, floor, mrt, varying, vec4, vertexIndex } from 'three/tsl';
 import { UNIT_CONE_Z, UNIT_CYLINDER_Z } from './primitives';
+import { PICK_OUTPUT, pickIdUniform } from './picking';
+
+/** Pick output for FlatArrows: 6 vertices per arrow, so the arrow index is vertexIndex / 6. */
+const FLAT_ARROW_PICK_MRT = mrt({ [PICK_OUTPUT]: vec4(pickIdUniform, varying(floor(float(vertexIndex).div(6))), depth, 1) });
 
 const tmpM = new THREE.Matrix4();
 const tmpPos = new THREE.Vector3();
@@ -144,6 +149,7 @@ export class FlatArrows extends THREE.LineSegments {
     const material = new THREE.LineBasicMaterial({ color });
     super(new THREE.BufferGeometry(), material);
     this.lineMaterial = material;
+    (material as unknown as { mrtNode: unknown }).mrtNode = FLAT_ARROW_PICK_MRT;
     this.frustumCulled = false;
   }
 

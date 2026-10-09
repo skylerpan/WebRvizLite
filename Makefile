@@ -13,7 +13,7 @@ CARGO_TARGET_DIR ?= target
 export CARGO_TARGET_DIR
 MOCK_PORT ?= 8765
 
-.PHONY: build wasm web server server-ros dev test check clean docker-build docker-shell docker-build-all docker-build-ros docker-run-ros docker-run-rosd mock-rust docker-mock-ros
+.PHONY: build wasm web server server-ros dev test check clean docker-build docker-shell docker-build-all docker-build-ros docker-run-ros docker-run-rosd mock-rust mock-rust-tier1 docker-mock-ros
 
 build: wasm web server
 
@@ -95,6 +95,10 @@ docker-run-rosd:
 #                  terminal.                      -> http://127.0.0.1:8766
 mock-rust: build
 	./$(CARGO_TARGET_DIR)/release/webrvizlite --mock --port $(MOCK_PORT) -d fixtures/mock_scene.rviz
+
+# Same mock scene, Tier 1 config (Odometry, covariance, polygon, grid cells, range, RobotModel, Image, Camera, saved views).
+mock-rust-tier1: build
+	./$(CARGO_TARGET_DIR)/release/webrvizlite --mock --port $(MOCK_PORT) -d fixtures/tier1_scene.rviz
 
 docker-mock-ros:
 	$(COMPOSE) run --rm dev python3 tools/mock_scene.py

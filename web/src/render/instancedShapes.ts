@@ -9,18 +9,28 @@
 import * as THREE from 'three/webgpu';
 import { cross, instancedBufferAttribute, positionLocal } from 'three/tsl';
 
+export interface InstancedShapesOptions {
+  /** Default true; translucent overlays (covariance) use false so they do not occlude each other. */
+  depthWrite?: boolean;
+  /** Default FrontSide. */
+  side?: THREE.Side;
+}
+
 export class InstancedShapes extends THREE.Group {
   private mesh: THREE.Mesh | null = null;
-  private readonly material = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: true });
+  private readonly material: THREE.MeshBasicNodeMaterial;
   private positions!: THREE.InstancedBufferAttribute;
   private quaternions!: THREE.InstancedBufferAttribute;
   private scales!: THREE.InstancedBufferAttribute;
   private colors!: THREE.InstancedBufferAttribute;
   private capacity = 0;
   private cursor = 0;
+  /** Caller-defined owner per instance (e.g. the marker entry), for selection. */
+  private tags: unknown[] = [];
 
-  constructor(private readonly base: THREE.BufferGeometry, initial = 64) {
+  constructor(private readonly base: THREE.BufferGeometry, initial = 64, options: InstancedShapesOptions = {}) {
     super();
+    this.material = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: options.depthWrite ?? true, side: options.side ?? THREE.FrontSide });
     this.allocate(initial);
   }
 
@@ -74,9 +84,10 @@ export class InstancedShapes extends THREE.Group {
     }
   }
 
-  push(x: number, y: number, z: number, qx: number, qy: number, qz: number, qw: number, sx: number, sy: number, sz: number, r: number, g: number, b: number, a: number) {
+  push(x: number, y: number, z: number, qx: number, qy: number, qz: number, qw: number, sx: number, sy: number, sz: number, r: number, g: number, b: number, a: number, tag?: unknown) {
     this.reserve(1);
     const i = this.cursor++;
+    this.tags[i] = tag;
     const p = this.positions.array as Float32Array;
     p[i * 3] = x; p[i * 3 + 1] = y; p[i * 3 + 2] = z;
     const q = this.quaternions.array as Float32Array;
@@ -100,6 +111,20 @@ export class InstancedShapes extends THREE.Group {
 
   instanceCount() {
     return this.cursor;
+  }
+
+  tagAt(i: number): unknown {
+    return i < this.cursor ? this.tags[i] : undefined;
+  }
+
+  /** Instance pose/scale as pushed (for selection highlight boxes). */
+  instanceAt(i: number, pos: THREE.Vector3, scale: THREE.Vector3): boolean {
+    if (i >= this.cursor) return false;
+    const p = this.positions.array as Float32Array;
+    const s = this.scales.array as Float32Array;
+    pos.set(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
+    scale.set(s[i * 3], s[i * 3 + 1], s[i * 3 + 2]);
+    return true;
   }
 
   dispose() {

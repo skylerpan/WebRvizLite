@@ -60,12 +60,13 @@ export function DebugPanel(_props: PanelProps) {
           <Show when={bridge.hello()} fallback="not connected">
             {(h) => <>server v{h().version} · {h().mock ? 'mock' : h().ros_distro ?? 'ros'} · sim time {h().use_sim_time ? 'on' : 'off'}</>}
           </Show>
+          {' · wasm memory '}{fmtBytes(bridge.wasmBytes())}
         </span>
         <Show when={bridge.lastError()}>{(e) => <span class="wrl-status-err">{e()}</span>}</Show>
       </div>
       <table class="wrl-debug-table">
         <thead>
-          <tr><th></th><th>Topic</th><th>Type</th><th>Hz</th><th>Rate</th><th>Last</th><th>Msgs</th><th>Status</th></tr>
+          <tr><th></th><th>Topic</th><th>Type</th><th>Hz</th><th>Rate</th><th>Last</th><th>Msgs</th><th>Dropped</th><th>Via</th><th>Status</th></tr>
         </thead>
         <tbody>
           <For each={bridge.topics()}>
@@ -82,6 +83,8 @@ export function DebugPanel(_props: PanelProps) {
                   <td class="wrl-num">{st() ? `${fmtBytes(st()!.bps)}/s` : ''}</td>
                   <td class="wrl-num">{st() ? fmtBytes(st()!.lastBytes) : ''}</td>
                   <td class="wrl-num">{st() ? st()!.messages : ''}</td>
+                  <td class="wrl-num">{st() ? st()!.dropped : ''}</td>
+                  <td>{st()?.via ?? ''}</td>
                   <td>{st()?.error ? <span class="wrl-status-err">{st()!.error}</span> : st() ? <span class="wrl-status-ok">ok</span> : ''}</td>
                 </tr>
               );

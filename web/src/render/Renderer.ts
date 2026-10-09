@@ -2,7 +2,12 @@ import { createEffect, createRoot, createSignal } from 'solid-js';
 import * as THREE from 'three/webgpu';
 import { getApp } from '../app/store';
 import { ViewportInput } from './input';
-import { enablePerf, measure } from './perf';
+import { enablePerf, measure, measureAsync } from './perf';
+import type { ViewportServices } from '../tools/types';
+import { Picker, type PickHit } from './picking';
+
+/** Status bar text set by the active tool (rviz Tool::setStatus). */
+export const [toolStatus, setToolStatus] = createSignal('');
 
 /** Which backend the renderer ended up on; shown in the status bar. */
 export const [renderBackend, setRenderBackend] = createSignal<string>('initializing');
@@ -23,12 +28,24 @@ export function resetPerfCounters() {
  * goes to the ToolManager. WebGPU by default, automatic WebGL2 fallback (or
  * `?webgl` to force it).
  */
-export class Viewport {
+/** Frame at which the second pick warm-up runs (the scene has its first messages by then). */
+const PICK_WARMUP_FRAME = 90;
+
+export class Viewport implements ViewportServices {
   readonly renderer: THREE.WebGPURenderer;
   readonly scene: THREE.Scene;
+  /** Tool-drawn geometry (never pickable). */
+  readonly helpers = new THREE.Group();
+  private readonly raycaster = new THREE.Raycaster();
+  private readonly ndc = new THREE.Vector2();
+  private mouseX = 0;
+  private mouseY = 0;
+  private readonly picker: Picker;
+  private readonly selectBox: HTMLDivElement;
   private readonly resizeObserver: ResizeObserver;
   private readonly input: ViewportInput;
   private disposed = false;
+  private framesRendered = 0;
   private lastFrameMs = 0;
   private targetFps = 30;
   private fpsCount = 0;
@@ -59,10 +76,26 @@ export class Viewport {
       return dispose;
     });
 
+    this.picker = new Picker(this.renderer, this.scene, app.manager.picking);
+    this.selectBox = document.createElement('div');
+    this.selectBox.className = 'wrl-select-box';
+    this.selectBox.style.display = 'none';
+    container.appendChild(this.selectBox);
+    this.helpers.name = 'tool helpers';
+    this.helpers.userData.noPick = true;
+    this.helpers.userData.mainViewOnly = true;
+    this.scene.add(this.helpers);
     this.input = new ViewportInput(container, {
-      handleMouse: (e) => app.manager.tools.handleMouse(e),
+      handleMouse: (e) => {
+        if (e.type !== 'wheel') {
+          this.mouseX = e.x;
+          this.mouseY = e.y;
+        }
+        app.manager.tools.handleMouse(e);
+      },
       handleKey: (key, e) => app.handleViewportKey(key, e),
     });
+    app.manager.tools.attachViewport(this);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -94,9 +127,17 @@ export class Viewport {
     // Per-frame work must not allocate; displays update GPU buffers in place (spec §9.7).
     const manager = getApp().manager;
     const t0 = performance.now();
-    manager.views.setAspect(this.width / this.height);
+    // ResizeObserver callbacks are tied to the rendering steps; a tab that was
+    // in the background can miss them, so re-check the size each frame.
+    if (this.container.clientWidth !== this.width || this.container.clientHeight !== this.height) this.resize();
+    manager.views.setViewportSize(this.width, this.height);
     measure('update', () => manager.update(dt));
     measure('render', () => this.renderer.render(this.scene, manager.views.current().camera));
+    for (const v of manager.extraViews) measure('camera view', () => v.render());
+    this.framesRendered++;
+    // Compile the pick-pass pipelines off the critical path: once right after the first
+    // frame and once more when the first messages have populated the scene.
+    if (this.framesRendered === 1 || this.framesRendered === PICK_WARMUP_FRAME) void this.picker.pick(this.camera(), 0, 0, 1, 1, this.width, this.height).catch(() => undefined);
     const took = performance.now() - t0;
     if (took > 16) setLongFrames(longFrames() + 1);
     if (took > worstFrameMs()) setWorstFrameMs(Math.round(took * 10) / 10);
@@ -105,14 +146,70 @@ export class Viewport {
   private resize() {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
-    if (w === 0 || h === 0) return;
+    if (w === 0 || h === 0 || (w === this.width && h === this.height)) return;
     this.width = w;
     this.height = h;
     this.renderer.setSize(w, h, false);
+    getApp().manager.views.setViewportSize(w, h);
+  }
+
+  // --- ViewportServices (tools) ---------------------------------------------
+
+  camera(): THREE.Camera {
+    return getApp().manager.views.current().camera;
+  }
+  size() {
+    return { width: this.width, height: this.height };
+  }
+  lastMouse() {
+    return { x: this.mouseX, y: this.mouseY };
+  }
+  ray(x: number, y: number, out: THREE.Ray): THREE.Ray {
+    this.ndc.set((x / this.width) * 2 - 1, -(y / this.height) * 2 + 1);
+    this.raycaster.setFromCamera(this.ndc, this.camera());
+    out.copy(this.raycaster.ray);
+    return out;
+  }
+  groundPoint(x: number, y: number, out: THREE.Vector3): boolean {
+    this.ray(x, y, tmpRay);
+    return tmpRay.intersectPlane(GROUND, out) !== null;
+  }
+  pick(x: number, y: number, w: number, h: number): Promise<PickHit[]> {
+    this.resize();
+    return measureAsync('pick', () => this.picker.pick(this.camera(), x, y, w, h, this.width, this.height));
+  }
+  pickPoint(x: number, y: number): Promise<PickHit | null> {
+    this.resize();
+    return measureAsync('pick', () => this.picker.pickPoint(this.camera(), x, y, this.width, this.height));
+  }
+  pickBusy(): boolean {
+    return this.picker.isBusy();
+  }
+  setSelectBox(box: { x: number; y: number; w: number; h: number } | null) {
+    const el = this.selectBox;
+    if (!box) {
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = 'block';
+    el.style.left = `${Math.min(box.x, box.x + box.w)}px`;
+    el.style.top = `${Math.min(box.y, box.y + box.h)}px`;
+    el.style.width = `${Math.abs(box.w)}px`;
+    el.style.height = `${Math.abs(box.h)}px`;
+  }
+  setCursor(cursor: 'default' | 'crosshair' | 'move' | 'grab' | 'pointer') {
+    this.container.style.cursor = cursor;
+  }
+  setStatus(text: string) {
+    setToolStatus(text);
   }
 
   dispose() {
     this.disposed = true;
+    getApp().manager.tools.attachViewport(null);
+    this.picker.dispose();
+    this.selectBox.remove();
+    this.helpers.removeFromParent();
     this.disposeEffects?.();
     this.input.dispose();
     this.resizeObserver.disconnect();
@@ -121,3 +218,6 @@ export class Viewport {
     this.renderer.domElement.remove();
   }
 }
+
+const GROUND = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const tmpRay = new THREE.Ray();

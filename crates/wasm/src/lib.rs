@@ -2,9 +2,13 @@
 //! in `webrvizlite-core` so it can be unit-tested natively.
 
 // wasm-bindgen's getter_with_clone generates `.clone()` on Copy fields too.
+// Array fields are private and moved out with `take_*` (one copy into JS,
+// no Rust-side clone); the JS side frees the object afterwards.
 #![allow(clippy::clone_on_copy)]
 
 use wasm_bindgen::prelude::*;
+use webrvizlite_core::covariance;
+use webrvizlite_core::image;
 use webrvizlite_core::math::Transform;
 use webrvizlite_core::msgs;
 use webrvizlite_core::pointcloud::{self, ColorOptions, Transformer};
@@ -74,6 +78,56 @@ pub const SNAPSHOT_STRIDE: usize = 9;
 #[wasm_bindgen]
 pub struct TfBuffer {
     inner: tf::TfBuffer,
+}
+
+/// Channel values of one point of a raw cloud message, for the Selection panel.
+/// `kind` is the worker decoder name; returns `{"names": [...], "values": [...]}`.
+#[wasm_bindgen(js_name = pointInfoJson)]
+pub fn point_info_json(bytes: &[u8], kind: &str, index: u32) -> Result<String, JsError> {
+    let pts = match kind {
+        "point_cloud2" => {
+            let cloud = msgs::pointcloud::decode_point_cloud2(bytes)
+                .map_err(|e| JsError::new(&e.to_string()))?;
+            pointcloud::points_from_cloud2(&cloud).map_err(JsError::new)?
+        }
+        "laser_scan" => pointcloud::points_from_laser_scan(
+            &msgs::pointcloud::decode_laser_scan(bytes)
+                .map_err(|e| JsError::new(&e.to_string()))?,
+        ),
+        "livox_custom_msg" => pointcloud::points_from_livox(
+            &msgs::pointcloud::decode_livox_custom_msg(bytes)
+                .map_err(|e| JsError::new(&e.to_string()))?,
+        ),
+        other => return Err(JsError::new(&format!("not a point cloud decoder: {other}"))),
+    };
+    let i = index as usize;
+    if i >= pts.len() {
+        return Err(JsError::new("point index out of range"));
+    }
+    let mut names: Vec<&str> = vec!["x", "y", "z"];
+    let mut values: Vec<f64> = vec![
+        pts.xyz[i * 3] as f64,
+        pts.xyz[i * 3 + 1] as f64,
+        pts.xyz[i * 3 + 2] as f64,
+    ];
+    for (name, data) in &pts.channels {
+        names.push(name);
+        values.push(data.get(i).copied().unwrap_or(f32::NAN) as f64);
+    }
+    if let Some(rgb) = &pts.rgb {
+        names.push("rgb");
+        values.push(rgb.get(i).copied().unwrap_or(0) as f64);
+    }
+    let values: Vec<serde_json::Value> = values
+        .into_iter()
+        .map(|v| {
+            serde_json::Number::from_f64(v)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null)
+        })
+        .collect();
+    serde_json::to_string(&serde_json::json!({ "names": names, "values": values }))
+        .map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
@@ -226,9 +280,23 @@ pub struct OccupancyGridData {
     pub width: u32,
     pub height: u32,
     /// Origin pose of cell (0,0) in the message frame: x y z qx qy qz qw.
-    pub origin: Vec<f64>,
+    origin: Vec<f64>,
     /// `width * height` bytes, row-major, int8 reinterpreted as u8 (-1 → 255).
-    pub data: Vec<u8>,
+    data: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl OccupancyGridData {
+    /// Moves `origin` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeOrigin)]
+    pub fn take_origin(&mut self) -> Vec<f64> {
+        std::mem::take(&mut self.origin)
+    }
+    /// Moves `data` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeData)]
+    pub fn take_data(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.data)
+    }
 }
 
 #[wasm_bindgen(getter_with_clone)]
@@ -239,7 +307,16 @@ pub struct OccupancyGridUpdateData {
     pub y: i32,
     pub width: u32,
     pub height: u32,
-    pub data: Vec<u8>,
+    data: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl OccupancyGridUpdateData {
+    /// Moves `data` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeData)]
+    pub fn take_data(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.data)
+    }
 }
 
 /// Poses in the fixed frame: positions `xyz` × n, orientations `xyzw` × n.
@@ -248,8 +325,22 @@ pub struct PosesData {
     pub frame_id: String,
     pub stamp_ns: u64,
     pub tf_status: u8,
-    pub positions: Vec<f32>,
-    pub orientations: Vec<f32>,
+    positions: Vec<f32>,
+    orientations: Vec<f32>,
+}
+
+#[wasm_bindgen]
+impl PosesData {
+    /// Moves `positions` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePositions)]
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.positions)
+    }
+    /// Moves `orientations` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeOrientations)]
+    pub fn take_orientations(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.orientations)
+    }
 }
 
 fn poses_data(
@@ -276,8 +367,450 @@ fn poses_data(
     }
 }
 
+/// Pose with covariance in the fixed frame, plus the ready-to-draw covariance
+/// visual (rviz CovarianceVisual): `ellipsoid` = [sx, sy, sz, qx, qy, qz, qw]
+/// (half axes already scaled, orientation composed with the fixed-frame
+/// rotation; empty when the position covariance is zero / invalid) and
+/// `orientation` = 3 × [axis, a, b, angle] discs (3-D) or [half_angle] (2-D).
+#[wasm_bindgen(getter_with_clone)]
+pub struct PoseCovData {
+    pub frame_id: String,
+    pub stamp_ns: u64,
+    pub tf_status: u8,
+    pub child_frame_id: String,
+    positions: Vec<f32>,
+    orientations: Vec<f32>,
+    covariance: Vec<f64>,
+    ellipsoid: Vec<f32>,
+    orientation: Vec<f32>,
+    pub is_2d: bool,
+}
+
+#[wasm_bindgen]
+impl PoseCovData {
+    /// Moves `positions` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePositions)]
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.positions)
+    }
+    /// Moves `orientations` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeOrientations)]
+    pub fn take_orientations(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.orientations)
+    }
+    /// Moves `covariance` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeCovariance)]
+    pub fn take_covariance(&mut self) -> Vec<f64> {
+        std::mem::take(&mut self.covariance)
+    }
+    /// Moves `ellipsoid` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeEllipsoid)]
+    pub fn take_ellipsoid(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.ellipsoid)
+    }
+    /// Moves `orientation` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeOrientation)]
+    pub fn take_orientation(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.orientation)
+    }
+}
+
+/// Points (xyz × n) in the fixed frame.
+#[wasm_bindgen(getter_with_clone)]
+pub struct PointsData {
+    pub frame_id: String,
+    pub stamp_ns: u64,
+    pub tf_status: u8,
+    positions: Vec<f32>,
+}
+
+#[wasm_bindgen]
+impl PointsData {
+    /// Moves `positions` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePositions)]
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.positions)
+    }
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct GridCellsData {
+    pub frame_id: String,
+    pub stamp_ns: u64,
+    pub tf_status: u8,
+    positions: Vec<f32>,
+    pub cell_width: f32,
+    pub cell_height: f32,
+}
+
+#[wasm_bindgen]
+impl GridCellsData {
+    /// Moves `positions` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePositions)]
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.positions)
+    }
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct RangeData {
+    pub frame_id: String,
+    pub stamp_ns: u64,
+    pub tf_status: u8,
+    /// Sensor pose in the fixed frame: xyz + xyzw.
+    positions: Vec<f32>,
+    orientations: Vec<f32>,
+    pub range: f32,
+    pub field_of_view: f32,
+    pub min_range: f32,
+    pub max_range: f32,
+}
+
+#[wasm_bindgen]
+impl RangeData {
+    /// Moves `positions` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePositions)]
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.positions)
+    }
+    /// Moves `orientations` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeOrientations)]
+    pub fn take_orientations(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.orientations)
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct CovarianceOptions {
+    #[serde(default = "one")]
+    pos_scale: f64,
+    #[serde(default = "one")]
+    ori_scale: f64,
+    #[serde(default = "one")]
+    ori_offset: f64,
+}
+fn one() -> f64 {
+    1.0
+}
+
+fn pose_cov_data(
+    buf: &tf::TfBuffer,
+    fixed_frame: &str,
+    header: &msgs::Header,
+    child_frame_id: &str,
+    pose: &Transform,
+    cov: &[f64; 36],
+    options_json: &str,
+) -> PoseCovData {
+    let opts: CovarianceOptions = serde_json::from_str(options_json).unwrap_or(CovarianceOptions {
+        pos_scale: 1.0,
+        ori_scale: 1.0,
+        ori_offset: 1.0,
+    });
+    let stamp_ns = header.stamp.to_ns();
+    let (tf, tf_status) = transform_for(buf, fixed_frame, &header.frame_id, stamp_ns);
+    let t = tf.mul(pose);
+    let ellipsoid = covariance::position_ellipsoid(cov, opts.pos_scale)
+        .map(|e| {
+            let q = webrvizlite_core::math::quat_mul(tf.q, e.quat);
+            vec![
+                e.half_axes[0] as f32,
+                e.half_axes[1] as f32,
+                e.half_axes[2] as f32,
+                q[0] as f32,
+                q[1] as f32,
+                q[2] as f32,
+                q[3] as f32,
+            ]
+        })
+        .unwrap_or_default();
+    let orientation = covariance::orientation_visual(cov, opts.ori_scale, opts.ori_offset)
+        .map(|v| covariance::orientation_to_vec(&v))
+        .unwrap_or_default();
+    PoseCovData {
+        frame_id: header.frame_id.clone(),
+        stamp_ns,
+        tf_status,
+        child_frame_id: child_frame_id.into(),
+        positions: t.t.iter().map(|v| *v as f32).collect(),
+        orientations: t.q.iter().map(|v| *v as f32).collect(),
+        covariance: cov.to_vec(),
+        ellipsoid,
+        orientation,
+        is_2d: covariance::is_2d(cov),
+    }
+}
+
+fn points_in_fixed_frame(tf: &Transform, xyz: &[f32]) -> Vec<f32> {
+    let mut out = Vec::with_capacity(xyz.len());
+    for p in xyz.as_chunks::<3>().0 {
+        let q = tf.apply_point([p[0] as f64, p[1] as f64, p[2] as f64]);
+        out.extend(q.iter().map(|v| *v as f32));
+    }
+    out
+}
+
+/// RGBA8 conversion of one sensor_msgs/Image for an Image / Camera display.
+#[wasm_bindgen(getter_with_clone)]
+pub struct ImageData {
+    pub frame_id: String,
+    pub stamp_ns: u64,
+    pub width: u32,
+    pub height: u32,
+    pub encoding: String,
+    rgba: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl ImageData {
+    /// Moves `rgba` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeRgba)]
+    pub fn take_rgba(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.rgba)
+    }
+}
+
+/// Per-subscription image converter (keeps the depth normalisation history).
+#[wasm_bindgen]
+#[derive(Default)]
+pub struct ImageConverter {
+    state: image::ImageNormalizer,
+}
+
+#[derive(serde::Deserialize)]
+struct ImageOptionsJson {
+    #[serde(default = "default_true")]
+    normalize: bool,
+    #[serde(default)]
+    min: f32,
+    #[serde(default = "one_f32")]
+    max: f32,
+    #[serde(default = "five")]
+    median_window: usize,
+}
+fn default_true() -> bool {
+    true
+}
+fn one_f32() -> f32 {
+    1.0
+}
+fn five() -> usize {
+    5
+}
+
+#[wasm_bindgen]
+impl ImageConverter {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> ImageConverter {
+        ImageConverter::default()
+    }
+
+    /// `options_json`: `{normalize, min, max, median_window}` (Image display properties).
+    pub fn convert(&mut self, bytes: &[u8], options_json: &str) -> Result<ImageData, JsError> {
+        let img = msgs::sensor::decode_image(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+        let o: ImageOptionsJson = serde_json::from_str(options_json).unwrap_or(ImageOptionsJson {
+            normalize: true,
+            min: 0.0,
+            max: 1.0,
+            median_window: 5,
+        });
+        let opts = image::DepthOptions {
+            normalize: o.normalize,
+            min: o.min,
+            max: o.max,
+            median_window: o.median_window,
+        };
+        let mut rgba = Vec::new();
+        image::to_rgba8(&img, &opts, &mut self.state, &mut rgba).map_err(|e| JsError::new(&e))?;
+        Ok(ImageData {
+            frame_id: img.header.frame_id,
+            stamp_ns: img.header.stamp.to_ns(),
+            width: img.width,
+            height: img.height,
+            encoding: img.encoding,
+            rgba,
+        })
+    }
+}
+
+/// Camera intrinsics for the Camera display.
+#[wasm_bindgen(getter_with_clone)]
+pub struct CameraInfoData {
+    pub frame_id: String,
+    pub stamp_ns: u64,
+    pub width: u32,
+    pub height: u32,
+    k: Vec<f64>,
+    p: Vec<f64>,
+    d: Vec<f64>,
+    pub binning_x: u32,
+    pub binning_y: u32,
+    /// x_offset, y_offset, height, width
+    roi: Vec<u32>,
+}
+
+#[wasm_bindgen]
+impl CameraInfoData {
+    /// Moves `k` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeK)]
+    pub fn take_k(&mut self) -> Vec<f64> {
+        std::mem::take(&mut self.k)
+    }
+    /// Moves `p` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeP)]
+    pub fn take_p(&mut self) -> Vec<f64> {
+        std::mem::take(&mut self.p)
+    }
+    /// Moves `d` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeD)]
+    pub fn take_d(&mut self) -> Vec<f64> {
+        std::mem::take(&mut self.d)
+    }
+    /// Moves `roi` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeRoi)]
+    pub fn take_roi(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.roi)
+    }
+}
+
+#[wasm_bindgen(js_name = decodeCameraInfo)]
+pub fn decode_camera_info(bytes: &[u8]) -> Result<CameraInfoData, JsError> {
+    let c = msgs::sensor::decode_camera_info(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+    Ok(CameraInfoData {
+        frame_id: c.header.frame_id,
+        stamp_ns: c.header.stamp.to_ns(),
+        width: c.width,
+        height: c.height,
+        k: c.k.to_vec(),
+        p: c.p.to_vec(),
+        d: c.d,
+        binning_x: c.binning_x,
+        binning_y: c.binning_y,
+        roi: c.roi.to_vec(),
+    })
+}
+
+/// std_msgs/String payload (robot_description).
+#[wasm_bindgen(js_name = decodeString)]
+pub fn decode_string(bytes: &[u8]) -> Result<String, JsError> {
+    msgs::std_msgs::decode_string(bytes).map_err(|e| JsError::new(&e.to_string()))
+}
+
 #[wasm_bindgen]
 impl TfBuffer {
+    /// nav_msgs/OccupancyGrid.
+    /// geometry_msgs/PoseWithCovarianceStamped → pose + covariance visual in the fixed frame.
+    #[wasm_bindgen(js_name = decodePoseWithCovariance)]
+    pub fn decode_pose_with_covariance(
+        &self,
+        bytes: &[u8],
+        fixed_frame: &str,
+        options_json: &str,
+    ) -> Result<PoseCovData, JsError> {
+        let p = msgs::geometry::decode_pose_with_covariance_stamped(bytes)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(pose_cov_data(
+            &self.inner,
+            fixed_frame,
+            &p.header,
+            "",
+            &p.pose,
+            &p.covariance,
+            options_json,
+        ))
+    }
+
+    /// nav_msgs/Odometry → pose + covariance visual in the fixed frame.
+    #[wasm_bindgen(js_name = decodeOdometry)]
+    pub fn decode_odometry(
+        &self,
+        bytes: &[u8],
+        fixed_frame: &str,
+        options_json: &str,
+    ) -> Result<PoseCovData, JsError> {
+        let o = msgs::nav::decode_odometry(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(pose_cov_data(
+            &self.inner,
+            fixed_frame,
+            &o.header,
+            &o.child_frame_id,
+            &o.pose,
+            &o.pose_covariance,
+            options_json,
+        ))
+    }
+
+    /// geometry_msgs/PointStamped → one pose (identity orientation) in the fixed frame.
+    #[wasm_bindgen(js_name = decodePointStamped)]
+    pub fn decode_point_stamped(
+        &self,
+        bytes: &[u8],
+        fixed_frame: &str,
+    ) -> Result<PosesData, JsError> {
+        let p = msgs::geometry::decode_point_stamped(bytes)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        let pose = Transform::new(p.point, [0.0, 0.0, 0.0, 1.0]);
+        Ok(poses_data(&self.inner, fixed_frame, &p.header, &[pose]))
+    }
+
+    /// geometry_msgs/PolygonStamped → vertices in the fixed frame.
+    #[wasm_bindgen(js_name = decodePolygonStamped)]
+    pub fn decode_polygon_stamped(
+        &self,
+        bytes: &[u8],
+        fixed_frame: &str,
+    ) -> Result<PointsData, JsError> {
+        let p = msgs::geometry::decode_polygon_stamped(bytes)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        let stamp_ns = p.header.stamp.to_ns();
+        let (tf, tf_status) = transform_for(&self.inner, fixed_frame, &p.header.frame_id, stamp_ns);
+        Ok(PointsData {
+            frame_id: p.header.frame_id,
+            stamp_ns,
+            tf_status,
+            positions: points_in_fixed_frame(&tf, &p.points),
+        })
+    }
+
+    /// nav_msgs/GridCells → cell centres in the fixed frame.
+    #[wasm_bindgen(js_name = decodeGridCells)]
+    pub fn decode_grid_cells(
+        &self,
+        bytes: &[u8],
+        fixed_frame: &str,
+    ) -> Result<GridCellsData, JsError> {
+        let g = msgs::nav::decode_grid_cells(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+        let stamp_ns = g.header.stamp.to_ns();
+        let (tf, tf_status) = transform_for(&self.inner, fixed_frame, &g.header.frame_id, stamp_ns);
+        Ok(GridCellsData {
+            frame_id: g.header.frame_id,
+            stamp_ns,
+            tf_status,
+            positions: points_in_fixed_frame(&tf, &g.cells),
+            cell_width: g.cell_width,
+            cell_height: g.cell_height,
+        })
+    }
+
+    /// sensor_msgs/Range → sensor pose in the fixed frame + the cone parameters.
+    #[wasm_bindgen(js_name = decodeRange)]
+    pub fn decode_range(&self, bytes: &[u8], fixed_frame: &str) -> Result<RangeData, JsError> {
+        let r = msgs::sensor::decode_range(bytes).map_err(|e| JsError::new(&e.to_string()))?;
+        let stamp_ns = r.header.stamp.to_ns();
+        let (tf, tf_status) = transform_for(&self.inner, fixed_frame, &r.header.frame_id, stamp_ns);
+        Ok(RangeData {
+            frame_id: r.header.frame_id,
+            stamp_ns,
+            tf_status,
+            positions: tf.t.iter().map(|v| *v as f32).collect(),
+            orientations: tf.q.iter().map(|v| *v as f32).collect(),
+            range: r.range,
+            field_of_view: r.field_of_view,
+            min_range: r.min_range,
+            max_range: r.max_range,
+        })
+    }
+
     /// nav_msgs/OccupancyGrid. The origin stays in the message frame; the main
     /// thread looks the frame up every render so the map follows tf.
     #[wasm_bindgen(js_name = decodeOccupancyGrid)]
@@ -353,9 +886,9 @@ pub struct PointCloudData {
     pub tf_status: u8,
     pub count: u32,
     /// xyz × count
-    pub positions: Vec<f32>,
+    positions: Vec<f32>,
     /// rgb × count
-    pub colors: Vec<u8>,
+    colors: Vec<u8>,
     /// JSON array of channel names available for the Intensity transformer.
     pub channels_json: String,
     /// JSON array of transformer names supported by this cloud.
@@ -364,6 +897,20 @@ pub struct PointCloudData {
     pub transformer: String,
     pub min: f32,
     pub max: f32,
+}
+
+#[wasm_bindgen]
+impl PointCloudData {
+    /// Moves `positions` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePositions)]
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.positions)
+    }
+    /// Moves `colors` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeColors)]
+    pub fn take_colors(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.colors)
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -543,10 +1090,29 @@ pub const MARKER_STRIDE: usize = 24;
 #[wasm_bindgen(getter_with_clone)]
 pub struct MarkerArrayData {
     pub count: u32,
-    pub numeric: Vec<f64>,
+    numeric: Vec<f64>,
     pub strings_json: String,
-    pub points: Vec<f32>,
-    pub colors: Vec<u8>,
+    points: Vec<f32>,
+    colors: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl MarkerArrayData {
+    /// Moves `numeric` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeNumeric)]
+    pub fn take_numeric(&mut self) -> Vec<f64> {
+        std::mem::take(&mut self.numeric)
+    }
+    /// Moves `points` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePoints)]
+    pub fn take_points(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.points)
+    }
+    /// Moves `colors` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeColors)]
+    pub fn take_colors(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.colors)
+    }
 }
 
 fn pack_markers(

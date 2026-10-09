@@ -10,6 +10,15 @@ import { POINT_CLOUD2_INFO, PointCloud2Display } from './pointCloud2Display';
 import { LASER_SCAN_INFO, LaserScanDisplay } from './laserScanDisplay';
 import { LIVOX_INFO, LivoxDisplay } from './livoxDisplay';
 import { MARKER_ARRAY_INFO, MARKER_INFO, MarkerArrayDisplay, MarkerDisplay } from './markerDisplay';
+import { POSE_WITH_COVARIANCE_INFO, PoseWithCovarianceDisplay } from './poseWithCovarianceDisplay';
+import { ODOMETRY_INFO, OdometryDisplay } from './odometryDisplay';
+import { POINT_STAMPED_INFO, PointStampedDisplay } from './pointStampedDisplay';
+import { POLYGON_INFO, PolygonDisplay } from './polygonDisplay';
+import { GRID_CELLS_INFO, GridCellsDisplay } from './gridCellsDisplay';
+import { RANGE_INFO, RangeDisplay } from './rangeDisplay';
+import { ROBOT_MODEL_INFO, RobotModelDisplay } from './robotModelDisplay';
+import { IMAGE_INFO, ImageDisplay } from './imageDisplay';
+import { CAMERA_INFO_DISPLAY, CameraDisplay } from './cameraDisplay';
 import type { DisplayRegistry } from './types';
 
 /** Builds the registry of built-in displays (spec §4.2: internal plugin-style registry). */
@@ -27,5 +36,14 @@ export function createDisplayRegistry(fixedFrame: () => string): DisplayRegistry
   r.register(LIVOX_INFO, () => new LivoxDisplay());
   r.register(MARKER_INFO, () => new MarkerDisplay());
   r.register(MARKER_ARRAY_INFO, () => new MarkerArrayDisplay());
+  r.register(POSE_WITH_COVARIANCE_INFO, () => new PoseWithCovarianceDisplay());
+  r.register(ODOMETRY_INFO, () => new OdometryDisplay());
+  r.register(POINT_STAMPED_INFO, () => new PointStampedDisplay());
+  r.register(POLYGON_INFO, () => new PolygonDisplay());
+  r.register(GRID_CELLS_INFO, () => new GridCellsDisplay());
+  r.register(RANGE_INFO, () => new RangeDisplay());
+  r.register(ROBOT_MODEL_INFO, () => new RobotModelDisplay());
+  r.register(IMAGE_INFO, () => new ImageDisplay());
+  r.register(CAMERA_INFO_DISPLAY, () => new CameraDisplay());
   return r;
 }

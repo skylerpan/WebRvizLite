@@ -1,11 +1,11 @@
 //! nav_msgs/OccupancyGrid, nav_msgs/Path, map_msgs/OccupancyGridUpdate
 
 use super::common::{Header, Stamp};
-use super::geometry::{POSE_SIZE, read_pose};
+use super::geometry::{POSE_SIZE, read_covariance, read_pose};
 use crate::cdr::{CdrError, Reader};
 use crate::math::Transform;
 #[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
 /// nav_msgs/msg/MapMetaData + the cell data.
 #[derive(Debug, Clone, PartialEq)]
@@ -96,10 +96,111 @@ pub fn decode_path(bytes: &[u8]) -> Result<Path, CdrError> {
     Ok(Path { header, poses })
 }
 
+/// nav_msgs/msg/Odometry: pose (+ covariance) and twist (+ covariance) in `child_frame_id`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Odometry {
+    pub header: Header,
+    pub child_frame_id: String,
+    pub pose: Transform,
+    pub pose_covariance: [f64; 36],
+    /// linear xyz, angular xyz
+    pub twist: [f64; 6],
+    pub twist_covariance: [f64; 36],
+}
+
+pub fn decode_odometry(bytes: &[u8]) -> Result<Odometry, CdrError> {
+    let mut r = Reader::new(bytes)?;
+    let header = Header::read(&mut r)?;
+    let child_frame_id = r.string()?;
+    let pose = read_pose(&mut r)?;
+    let pose_covariance = read_covariance(&mut r)?;
+    let mut twist = [0.0; 6];
+    for v in twist.iter_mut() {
+        *v = r.f64()?;
+    }
+    let twist_covariance = read_covariance(&mut r)?;
+    Ok(Odometry {
+        header,
+        child_frame_id,
+        pose,
+        pose_covariance,
+        twist,
+        twist_covariance,
+    })
+}
+
+/// nav_msgs/msg/GridCells: cell size and centres (Point32 → flat xyz f32).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GridCells {
+    pub header: Header,
+    pub cell_width: f32,
+    pub cell_height: f32,
+    pub cells: Vec<f32>,
+}
+
+pub fn decode_grid_cells(bytes: &[u8]) -> Result<GridCells, CdrError> {
+    let mut r = Reader::new(bytes)?;
+    let header = Header::read(&mut r)?;
+    let cell_width = r.f32()?;
+    let cell_height = r.f32()?;
+    let n = r.seq_len(12)?;
+    let mut cells = Vec::with_capacity(n * 3);
+    for _ in 0..n {
+        cells.push(r.f32()?);
+        cells.push(r.f32()?);
+        cells.push(r.f32()?);
+    }
+    Ok(GridCells {
+        header,
+        cell_width,
+        cell_height,
+        cells,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cdr::Writer;
+
+    #[test]
+    fn odometry_and_grid_cells() {
+        let mut w = Writer::new();
+        w.i32(1).u32(0).string("odom").string("base_link");
+        for v in [1.0f64, 2.0, 0.0, 0.0, 0.0, 0.0, 1.0] {
+            w.f64(v);
+        }
+        for i in 0..36 {
+            w.f64(if i % 7 == 0 { 0.1 } else { 0.0 });
+        }
+        for v in [0.5f64, 0.0, 0.0, 0.0, 0.0, 0.2] {
+            w.f64(v);
+        }
+        for _ in 0..36 {
+            w.f64(0.0);
+        }
+        let o = decode_odometry(&w.finish()).unwrap();
+        assert_eq!(o.child_frame_id, "base_link");
+        assert_eq!(o.pose.t, [1.0, 2.0, 0.0]);
+        assert_eq!(o.pose_covariance[0], 0.1);
+        assert_eq!(o.twist, [0.5, 0.0, 0.0, 0.0, 0.0, 0.2]);
+
+        let mut w = Writer::new();
+        w.i32(1).u32(0).string("map").f32(0.1).f32(0.1).seq_len(2);
+        w.f32(0.0).f32(0.0).f32(0.0).f32(0.1).f32(0.0).f32(0.0);
+        let g = decode_grid_cells(&w.finish()).unwrap();
+        assert_eq!((g.cell_width, g.cell_height), (0.1, 0.1));
+        assert_eq!(g.cells, vec![0.0, 0.0, 0.0, 0.1, 0.0, 0.0]);
+        // corrupt length rejected
+        let mut w = Writer::new();
+        w.i32(1)
+            .u32(0)
+            .string("map")
+            .f32(0.1)
+            .f32(0.1)
+            .u32(1_000_000);
+        assert!(decode_grid_cells(&w.finish()).is_err());
+    }
 
     #[test]
     fn occupancy_grid_round_trip() {

@@ -25,3 +25,8 @@ __pycache__/
 
 # rosbag2 recordings
 /bags/
+/target-host/
+crates/wasm/target-host/
+
+# Rust (nested crate builds)
+crates/*/target/

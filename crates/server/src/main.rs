@@ -6,6 +6,8 @@ mod hub;
 mod mesh;
 mod session;
 mod static_files;
+#[cfg(feature = "webtransport")]
+mod wt;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -33,12 +35,34 @@ pub struct AppState {
     pub mock: bool,
     pub display_config: Option<PathBuf>,
     pub fixed_frame: Option<String>,
+    /// `package://NAME` roots served by /api/mesh in addition to the ament index.
+    pub package_paths: Arc<Vec<(String, PathBuf)>>,
+    /// WebTransport endpoint, when it could be opened.
+    #[cfg(feature = "webtransport")]
+    pub wt: Option<wt::WtInfo>,
+    #[cfg(feature = "webtransport")]
+    pub wt_pending: wt::Pending,
     session_counter: Arc<AtomicU64>,
 }
 
 impl AppState {
-    fn hello(&self) -> ServerMessage {
+    /// Hello for one session; `token` identifies its WebTransport connection.
+    fn hello(&self, token: &str) -> ServerMessage {
         let t = self.hub.transport();
+        #[cfg(feature = "webtransport")]
+        let wt = self
+            .wt
+            .as_ref()
+            .map(|w| webrvizlite_core::protocol::WtHello {
+                port: w.port,
+                cert_sha256_hex: w.cert_sha256_hex.clone(),
+                token: token.into(),
+            });
+        #[cfg(not(feature = "webtransport"))]
+        let wt = {
+            let _ = token;
+            None
+        };
         ServerMessage::Hello {
             version: env!("CARGO_PKG_VERSION").into(),
             ros_distro: t.ros_distro(),
@@ -49,6 +73,7 @@ impl AppState {
                 .as_ref()
                 .map(|p| p.display().to_string()),
             fixed_frame: self.fixed_frame.clone(),
+            wt,
         }
     }
 
@@ -73,7 +98,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let transport: Arc<dyn Transport> = if args.mock {
-        tracing::info!("using mock transport (no ROS): /scan, /tf, /tf_static, /clock");
+        tracing::info!(
+            "using mock transport (no ROS): synthetic scene, see crates/bridge/src/mock.rs"
+        );
         webrvizlite_bridge::mock::MockTransport::new()
     } else {
         #[cfg(feature = "r2r")]
@@ -88,6 +115,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let mut package_paths: Vec<(String, PathBuf)> = Vec::new();
+    for spec in &args.package_paths {
+        match spec.split_once('=') {
+            Some((name, dir)) if !name.is_empty() => {
+                package_paths.push((name.into(), PathBuf::from(dir)))
+            }
+            _ => return Err(format!("--package-path expects NAME=DIR, got {spec:?}").into()),
+        }
+    }
+    if args.mock {
+        let fixtures = std::env::current_dir()?.join("fixtures");
+        if fixtures.is_dir() {
+            package_paths.push(("webrvizlite_fixtures".into(), fixtures));
+        }
+    }
+    for (name, dir) in &package_paths {
+        tracing::info!(package = name, dir = %dir.display(), "serving package:// meshes");
+    }
+
+    #[cfg(feature = "webtransport")]
+    let wt_pending = wt::new_pending();
+    #[cfg(feature = "webtransport")]
+    let wt_info = if args.no_webtransport {
+        None
+    } else {
+        match wt::start(&args.bind, args.port, wt_pending.clone()) {
+            Ok(info) => {
+                tracing::info!(port = info.port, cert_sha256 = %info.cert_sha256_hex, "WebTransport endpoint ready (UDP)");
+                Some(info)
+            }
+            Err(e) => {
+                tracing::warn!("WebTransport disabled: {e}");
+                None
+            }
+        }
+    };
+
     let (topics_tx, _) = broadcast::channel(16);
     let state = AppState {
         hub: hub::Hub::new(transport),
@@ -96,6 +160,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mock: args.mock,
         display_config: args.display_config.clone(),
         fixed_frame: args.fixed_frame.clone(),
+        package_paths: Arc::new(package_paths),
+        #[cfg(feature = "webtransport")]
+        wt: wt_info,
+        #[cfg(feature = "webtransport")]
+        wt_pending,
         session_counter: Arc::new(AtomicU64::new(1)),
     };
     state.refresh_topics().await;

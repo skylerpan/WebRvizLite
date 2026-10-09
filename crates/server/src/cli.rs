@@ -42,7 +42,16 @@ pub struct Args {
     #[arg(long)]
     pub web_dir: Option<PathBuf>,
 
-    /// Use the built-in mock transport (synthetic /scan, /tf, /tf_static, /clock)
+    /// Extra `package://NAME/...` roots for /api/mesh, as NAME=DIR (repeatable).
+    /// `--mock` adds `webrvizlite_fixtures=<cwd>/fixtures` automatically.
+    #[arg(long = "package-path", value_name = "NAME=DIR")]
+    pub package_paths: Vec<String>,
+
+    /// Do not open the WebTransport (QUIC/UDP) endpoint; everything goes over the WebSocket.
+    #[arg(long)]
+    pub no_webtransport: bool,
+
+    /// Use the built-in mock transport (synthetic navigation scene: scan, point clouds, tf, odom, markers, map, camera, ...)
     /// instead of ROS 2. Works without a ROS installation.
     #[arg(long)]
     pub mock: bool,

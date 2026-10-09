@@ -8,13 +8,17 @@ import { createSignal, type Accessor } from 'solid-js';
 import * as THREE from 'three/webgpu';
 import { getBridge } from './bridge';
 import { VisualizationManager } from '../displays/manager';
-import { DEFAULT_DISPLAYS_PANEL_STATE, RvizConfig, type DisplaysPanelState, type TreePanelState } from '../config/rvizConfig';
+import { DEFAULT_DISPLAYS_PANEL_STATE, RvizConfig, type DisplaysPanelState, type TimePanelState, type TreePanelState } from '../config/rvizConfig';
+import { RVIZ_PANELS, type Layout } from './layout';
 import type { Display, DisplayGroup } from '../displays/types';
-import type { Property } from '../property/types';
+import type { Property, YamlValue } from '../property/types';
 import { DisplayGroupImpl } from '../displays/Display';
 import type { ConfigSource } from './configIO';
 import { ExpandedState } from '../property/PropertyTree';
 import defaultRviz from '../../../fixtures/default.rviz?raw';
+
+/** rviz default.rviz expands the three publishing tools in the Tool Properties panel. */
+const DEFAULT_TOOL_PROPS_EXPANDED = ['/2D Pose Estimate1', '/2D Goal Pose1', '/Publish Point1'];
 
 export class AppStore {
   readonly scene = new THREE.Scene();
@@ -26,19 +30,28 @@ export class AppStore {
   readonly setDisplaysPanel: (s: DisplaysPanelState) => void;
   readonly viewsPanel: Accessor<TreePanelState>;
   readonly setViewsPanel: (s: TreePanelState) => void;
+  readonly toolPropsPanel: Accessor<TreePanelState>;
+  readonly setToolPropsPanel: (s: TreePanelState) => void;
+  readonly timePanel: Accessor<TimePanelState>;
+  readonly setTimePanel: (s: TimePanelState) => void;
+  /** The dockview layout once the main window is mounted. */
+  readonly layout: Accessor<Layout | null>;
+  readonly setLayout: (l: Layout | null) => void;
+  readonly selection = this.manager.selection;
   readonly configName: Accessor<string>;
   readonly setConfigName: (s: string) => void;
   /** Expanded nodes of the Displays and Views trees (paths are computed at save time). */
   readonly displaysExpanded = new ExpandedState(DEFAULT_DISPLAYS_PANEL_STATE.expanded);
   readonly viewsExpanded = new ExpandedState(['/Current View1']);
+  readonly toolPropsExpanded = new ExpandedState(DEFAULT_TOOL_PROPS_EXPANDED);
   readonly source: Accessor<ConfigSource>;
   readonly setSource: (s: ConfigSource) => void;
   /** Property selected in the Displays tree (drives Duplicate / Remove / Rename). */
   readonly selectedProperty: Accessor<Property | null>;
   readonly setSelectedProperty: (p: Property | null) => void;
   /** Open modal dialog, if any. */
-  readonly dialog: Accessor<'addDisplay' | 'about' | null>;
-  readonly setDialog: (d: 'addDisplay' | 'about' | null) => void;
+  readonly dialog: Accessor<'addDisplay' | 'addTool' | 'about' | null>;
+  readonly setDialog: (d: 'addDisplay' | 'addTool' | 'about' | null) => void;
 
   constructor() {
     const [dp, setDp] = createSignal<DisplaysPanelState>(DEFAULT_DISPLAYS_PANEL_STATE);
@@ -47,6 +60,18 @@ export class AppStore {
     const [vp, setVp] = createSignal<TreePanelState>({ expanded: ['/Current View1'], splitterRatio: 0.5 });
     this.viewsPanel = vp;
     this.setViewsPanel = setVp;
+    const [tp, setTp] = createSignal<TreePanelState>({ expanded: DEFAULT_TOOL_PROPS_EXPANDED, splitterRatio: 0.5 });
+    this.toolPropsPanel = tp;
+    this.setToolPropsPanel = setTp;
+    const [time, setTime] = createSignal<TimePanelState>({ experimental: false, syncMode: 0, syncSource: '' });
+    this.timePanel = time;
+    this.setTimePanel = setTime;
+    const [layout, setLayout] = createSignal<Layout | null>(null);
+    this.layout = layout;
+    this.setLayout = (l) => {
+      setLayout(l);
+      this.manager.setPanelHost(l);
+    };
     const [name, setName] = createSignal('default.rviz');
     this.configName = name;
     this.setConfigName = setName;
@@ -56,7 +81,7 @@ export class AppStore {
     const [sel, setSel] = createSignal<Property | null>(null);
     this.selectedProperty = sel;
     this.setSelectedProperty = setSel;
-    const [dialog, setDialog] = createSignal<'addDisplay' | 'about' | null>(null);
+    const [dialog, setDialog] = createSignal<'addDisplay' | 'addTool' | 'about' | null>(null);
     this.dialog = dialog;
     this.setDialog = setDialog;
   }
@@ -65,14 +90,35 @@ export class AppStore {
   loadConfigText(text: string, name: string) {
     const cfg = RvizConfig.parse(text);
     this.config = cfg;
+    // Layout first: rebuilding it later would close the panels Image / Camera displays open on load.
+    this.applyLayoutFromConfig();
     if (cfg.visualizationManager !== undefined) this.manager.load(cfg.visualizationManager);
     this.setDisplaysPanel(cfg.displaysPanelState());
     this.setViewsPanel(cfg.treePanelState('rviz_common/Views', ['/Current View1']));
+    this.setToolPropsPanel(cfg.treePanelState('rviz_common/Tool Properties', DEFAULT_TOOL_PROPS_EXPANDED));
+    this.setTimePanel(cfg.timePanelState());
     this.displaysExpanded.load(this.displaysPanel().expanded);
     this.viewsExpanded.load(this.viewsPanel().expanded);
+    this.toolPropsExpanded.load(this.toolPropsPanel().expanded);
     this.setConfigName(name);
     this.setSelectedProperty(null);
+    this.selection.clear();
+    this.manager.time.setPaused(false);
     document.title = `${name} - WebRvizLite`;
+  }
+
+  /**
+   * Panels: the saved dockview layout (`WebRvizLite Layout`) if present, else
+   * the RViz default built from the `Panels` list. Safe to call before the
+   * layout exists (then it runs when the window mounts).
+   */
+  applyLayoutFromConfig() {
+    const l = this.layout();
+    if (!l) return;
+    const saved = this.config.layout;
+    if (saved && l.restore(saved)) return;
+    const panels = this.config.panels();
+    l.buildDefault(panels.length ? panels : null);
   }
 
   loadDefaultConfig() {
@@ -84,7 +130,16 @@ export class AppStore {
   saveConfigText(): string {
     this.config.setVisualizationManager(this.manager.save());
     this.config.setDisplaysPanelState({ ...this.displaysPanel(), expanded: this.displaysExpanded.paths(this.manager.root) });
-    this.config.setTreePanelState('rviz_common/Views', 'Views', { ...this.viewsPanel(), expanded: this.viewsExpanded.paths(this.manager.views.treeRoot) });
+    const l = this.layout();
+    const open = l ? l.openPanels() : RVIZ_PANELS.map((p) => p.id);
+    const openClasses = RVIZ_PANELS.filter((p) => open.includes(p.id)).map((p) => p.classId);
+    this.config.prunePanels(RVIZ_PANELS.map((p) => p.classId), openClasses);
+    if (open.includes('views')) this.config.setTreePanelState('rviz_common/Views', 'Views', { ...this.viewsPanel(), expanded: this.viewsExpanded.paths(this.manager.views.treeRoot) });
+    if (open.includes('toolProps')) this.config.setTreePanelState('rviz_common/Tool Properties', 'Tool Properties', { ...this.toolPropsPanel(), expanded: this.toolPropsExpanded.paths(this.manager.tools.propertiesRoot) });
+    if (open.includes('selection')) this.config.setPanelPresent('rviz_common/Selection', 'Selection');
+    if (open.includes('time')) this.config.setTimePanelState(this.timePanel());
+    this.config.setWindowGeometry(RVIZ_PANELS.filter((p) => open.includes(p.id)).map((p) => p.title));
+    if (l) this.config.setLayout(l.serialize() as unknown as YamlValue);
     return this.config.stringify();
   }
 
@@ -111,6 +166,15 @@ export class AppStore {
     if (this.manager.tools.handleKey(key, e)) return true;
     if (key === 'z' || key === 'Z') {
       this.manager.views.current().reset();
+      return true;
+    }
+    if (key === 'f' || key === 'F') {
+      // rviz: F = look at the point under the cursor.
+      const vp = this.manager.tools.viewport();
+      if (vp) {
+        const m = vp.lastMouse();
+        void vp.pickPoint(m.x, m.y).then((hit) => { if (hit) this.manager.views.current().lookAt(hit.worldPos); });
+      }
       return true;
     }
     return false;

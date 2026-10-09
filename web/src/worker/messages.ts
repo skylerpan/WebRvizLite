@@ -30,6 +30,8 @@ export interface Hello {
   use_sim_time: boolean;
   display_config: string | null;
   fixed_frame: string | null;
+  /** WebTransport endpoint offered by the server (absent when disabled). */
+  wt?: { port: number; cert_sha256_hex: string; token: string };
 }
 
 export type WsState = 'connecting' | 'connected' | 'disconnected';
@@ -47,7 +49,16 @@ export type Decoder =
   | 'pose_stamped'
   | 'pose_array'
   | 'marker'
-  | 'marker_array';
+  | 'marker_array'
+  | 'pose_with_covariance'
+  | 'odometry'
+  | 'point_stamped'
+  | 'polygon'
+  | 'grid_cells'
+  | 'range'
+  | 'string'
+  | 'image'
+  | 'camera_info';
 
 /** Per-subscription receive statistics, reported by the worker on request. */
 export interface SubscriptionStats {
@@ -62,6 +73,10 @@ export interface SubscriptionStats {
   lastBytes: number;
   lastReceiveMs: number;
   error: string | null;
+  /** Transport the last frame arrived on. */
+  via: 'ws' | 'wt' | null;
+  /** Frames skipped because a newer one arrived before the previous was applied (latest-only subscriptions). */
+  dropped: number;
 }
 
 /**
@@ -84,6 +99,8 @@ export interface TfSnapshotMessage {
 export interface DataMessage {
   type: 'data';
   id: number;
+  /** Per-subscription sequence number, acknowledged by the main thread once applied (latest-only gate). */
+  seq: number;
   decoder: Decoder;
   /** Message stamp in ns. */
   stampNs: number;
@@ -103,7 +120,13 @@ export type MainToWorker =
   | { type: 'publish'; topic: string; msgType: string; qos: QosProfile; msg: unknown }
   | { type: 'stats'; enabled: boolean }
   | { type: 'set_fixed_frame'; frame: string }
-  | { type: 'tf_rate'; hz: number };
+  | { type: 'tf_rate'; hz: number }
+  /** Time the tf snapshot is taken at (ns); 0n = latest. Set while the Time panel is paused. */
+  | { type: 'tf_time'; timeNs: bigint }
+  /** Channel values of one point of the subscription's latest cloud (Selection panel). */
+  | { type: 'describe_point'; id: number; index: number; requestId: number }
+  /** The main thread applied message `seq` of subscription `id` (latest-only delivery gate). */
+  | { type: 'ack'; id: number; seq: number };
 
 export type WorkerToMain =
   | { type: 'wasm'; version: string }
@@ -111,6 +134,10 @@ export type WorkerToMain =
   | { type: 'topics'; topics: TopicInfo[] }
   | { type: 'clock'; rosTimeNs: bigint; wallTimeNs: bigint }
   | { type: 'error'; id: number | null; message: string }
-  | { type: 'stats'; subscriptions: SubscriptionStats[] }
+  /** `wasmBytes`: current size of the worker's wasm linear memory (Debug panel). */
+  | { type: 'stats'; subscriptions: SubscriptionStats[]; wasmBytes: number }
+  | { type: 'point_info'; requestId: number; info: { names: string[]; values: number[] } | null }
+  /** WebTransport session state for the status bar. */
+  | { type: 'transport'; wt: 'off' | 'connecting' | 'on' | 'failed'; detail?: string }
   | TfSnapshotMessage
   | DataMessage;

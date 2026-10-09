@@ -1,13 +1,26 @@
 //! ROS-free transport that synthesizes a small navigation scene so the whole
 //! pipeline can be exercised on a machine without ROS 2:
 //!
-//! | topic        | type                        | rate  |
-//! |--------------|-----------------------------|-------|
-//! | `/scan`      | sensor_msgs/msg/LaserScan   | 10 Hz |
-//! | `/livox/lidar` | livox_ros_driver2/msg/CustomMsg | 10 Hz |
-//! | `/tf`        | tf2_msgs/msg/TFMessage      | 30 Hz |
-//! | `/tf_static` | tf2_msgs/msg/TFMessage      | latched (transient local) |
-//! | `/clock`     | rosgraph_msgs/msg/Clock     | 50 Hz |
+//! | topic | type | rate |
+//! |---|---|---|
+//! | `/scan` | sensor_msgs/msg/LaserScan | 10 Hz |
+//! | `/livox/lidar` | livox_ros_driver2/msg/CustomMsg | 10 Hz (while subscribed) |
+//! | `/points` | sensor_msgs/msg/PointCloud2 (300k points) | 10 Hz |
+//! | `/tf` | tf2_msgs/msg/TFMessage | 30 Hz |
+//! | `/tf_static` | tf2_msgs/msg/TFMessage | latched (transient local) |
+//! | `/clock` | rosgraph_msgs/msg/Clock | 50 Hz |
+//! | `/map` | nav_msgs/msg/OccupancyGrid | latched |
+//! | `/robot_description` | std_msgs/msg/String (URDF) | latched |
+//! | `/plan`, `/goal_pose`, `/particlecloud` | nav_msgs/msg/Path, geometry_msgs/msg/PoseStamped, PoseArray | 2 Hz |
+//! | `/markers`, `/marker` | visualization_msgs/msg/MarkerArray, Marker | 1 Hz |
+//! | `/odom` | nav_msgs/msg/Odometry | 20 Hz |
+//! | `/amcl_pose` | geometry_msgs/msg/PoseWithCovarianceStamped | 1 Hz |
+//! | `/grid_cells` | nav_msgs/msg/GridCells | 1 Hz |
+//! | `/clicked_point_echo` | geometry_msgs/msg/PointStamped | 2 Hz |
+//! | `/footprint` | geometry_msgs/msg/PolygonStamped | 5 Hz |
+//! | `/range` | sensor_msgs/msg/Range | 10 Hz |
+//! | `/camera/image_raw`, `/camera/depth/image_raw` | sensor_msgs/msg/Image (rgb8 / 16UC1, 160×120) | 5 Hz (while subscribed) |
+//! | `/camera/camera_info` | sensor_msgs/msg/CameraInfo | 5 Hz |
 //!
 //! The robot drives a circle of radius 2 m inside an 8 m × 6 m room; the scan is
 //! a ray cast against the walls. `tools/mock_scene.py` publishes the same scene
@@ -51,6 +64,32 @@ pub const CUBE_MARKERS: usize = 5_000;
 pub const PARTICLE_TOPIC: &str = "/particlecloud";
 pub const LIVOX_TOPIC: &str = "/livox/lidar";
 pub const LIVOX_TYPE: &str = "livox_ros_driver2/msg/CustomMsg";
+// Tier 1 topics
+pub const ODOM_TOPIC: &str = "/odom";
+pub const ODOM_TYPE: &str = "nav_msgs/msg/Odometry";
+pub const AMCL_POSE_TOPIC: &str = "/amcl_pose";
+pub const POSE_COV_TYPE: &str = "geometry_msgs/msg/PoseWithCovarianceStamped";
+pub const POINT_TOPIC: &str = "/clicked_point_echo";
+pub const POINT_TYPE: &str = "geometry_msgs/msg/PointStamped";
+pub const FOOTPRINT_TOPIC: &str = "/footprint";
+pub const POLYGON_TYPE: &str = "geometry_msgs/msg/PolygonStamped";
+pub const GRID_CELLS_TOPIC: &str = "/grid_cells";
+pub const GRID_CELLS_TYPE: &str = "nav_msgs/msg/GridCells";
+pub const RANGE_TOPIC: &str = "/range";
+pub const RANGE_TYPE: &str = "sensor_msgs/msg/Range";
+pub const IMAGE_TOPIC: &str = "/camera/image_raw";
+pub const DEPTH_TOPIC: &str = "/camera/depth/image_raw";
+pub const IMAGE_TYPE: &str = "sensor_msgs/msg/Image";
+pub const CAMERA_INFO_TOPIC: &str = "/camera/camera_info";
+pub const CAMERA_INFO_TYPE: &str = "sensor_msgs/msg/CameraInfo";
+/// Synthetic camera: 160 × 120, fx = fy = 120, principal point at the centre.
+pub const CAM_W: usize = 160;
+pub const CAM_H: usize = 120;
+pub const CAM_F: f64 = 120.0;
+pub const ROBOT_DESCRIPTION_TOPIC: &str = "/robot_description";
+pub const STRING_TYPE: &str = "std_msgs/msg/String";
+/// URDF published on /robot_description (meshes resolve through `package://webrvizlite_fixtures/`).
+pub const ROBOT_URDF: &str = include_str!("../../../fixtures/robot_description/tier1_robot.urdf");
 /// Points per Livox frame (a Mid-360 publishes ~20k points per 100 ms).
 pub const LIVOX_POINTS: usize = 24_000;
 /// `livox_frame` sits this high above `base_link`.
@@ -102,6 +141,16 @@ impl MockTransport {
         channels.insert(POINTS_TOPIC, mk(POINTS_TYPE, 2));
         channels.insert(MARKERS_TOPIC, mk(MARKER_ARRAY_TYPE, 2));
         channels.insert(MARKER_TOPIC, mk(MARKER_TYPE, 2));
+        channels.insert(ODOM_TOPIC, mk(ODOM_TYPE, 4));
+        channels.insert(AMCL_POSE_TOPIC, mk(POSE_COV_TYPE, 2));
+        channels.insert(POINT_TOPIC, mk(POINT_TYPE, 2));
+        channels.insert(FOOTPRINT_TOPIC, mk(POLYGON_TYPE, 2));
+        channels.insert(GRID_CELLS_TOPIC, mk(GRID_CELLS_TYPE, 2));
+        channels.insert(RANGE_TOPIC, mk(RANGE_TYPE, 4));
+        channels.insert(ROBOT_DESCRIPTION_TOPIC, mk(STRING_TYPE, 1));
+        channels.insert(IMAGE_TOPIC, mk(IMAGE_TYPE, 2));
+        channels.insert(DEPTH_TOPIC, mk(IMAGE_TYPE, 2));
+        channels.insert(CAMERA_INFO_TOPIC, mk(CAMERA_INFO_TYPE, 2));
         let this = Arc::new(Self {
             channels,
             published: Mutex::new(HashMap::new()),
@@ -112,6 +161,8 @@ impl MockTransport {
         this.channel(TF_STATIC_TOPIC)
             .send(encode_tf_static(now_stamp()));
         this.channel(MAP_TOPIC).send(encode_map(now_stamp()));
+        this.channel(ROBOT_DESCRIPTION_TOPIC)
+            .send(encode_string(ROBOT_URDF));
         let t = this.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_millis(100));
@@ -141,6 +192,46 @@ impl MockTransport {
                     .send(encode_marker_array(stamp, pose, phase));
                 t.channel(MARKER_TOPIC)
                     .send(encode_single_marker(stamp, pose, phase));
+                t.channel(AMCL_POSE_TOPIC)
+                    .send(encode_amcl_pose(stamp, pose, phase));
+                t.channel(GRID_CELLS_TOPIC)
+                    .send(encode_grid_cells(stamp, phase));
+            }
+        });
+        let t = this.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_millis(50));
+            let mut phase = 0u32;
+            loop {
+                tick.tick().await;
+                phase = phase.wrapping_add(1);
+                let (stamp, pose) = t.pose_now();
+                t.channel(ODOM_TOPIC).send(encode_odometry(stamp, pose));
+                if phase.is_multiple_of(2) {
+                    t.channel(RANGE_TOPIC).send(encode_range(stamp, pose));
+                }
+                if phase.is_multiple_of(4) {
+                    t.channel(FOOTPRINT_TOPIC).send(encode_footprint(stamp));
+                }
+                if phase.is_multiple_of(10) {
+                    t.channel(POINT_TOPIC)
+                        .send(encode_point_stamped(stamp, pose, phase));
+                }
+                if phase.is_multiple_of(4)
+                    && t.channel(IMAGE_TOPIC).tx.receiver_count()
+                        + t.channel(DEPTH_TOPIC).tx.receiver_count()
+                        > 0
+                {
+                    let (rgb, depth) =
+                        tokio::task::spawn_blocking(move || encode_camera_images(stamp, pose))
+                            .await
+                            .unwrap_or_default();
+                    t.channel(IMAGE_TOPIC).send(rgb);
+                    t.channel(DEPTH_TOPIC).send(depth);
+                }
+                if phase.is_multiple_of(4) {
+                    t.channel(CAMERA_INFO_TOPIC).send(encode_camera_info(stamp));
+                }
             }
         });
         let t = this.clone();
@@ -399,20 +490,195 @@ fn encode_tf(stamp: Stamp, pose: Pose2D) -> Vec<u8> {
         [0.0, 0.0, 0.0],
         [0.0, 0.0, 0.0, 1.0],
     );
+    // base_footprint → base_link is static (robot_state_publisher style), see encode_tf_static.
     transform(
         &mut w,
         stamp,
         "odom",
-        "base_link",
+        "base_footprint",
         [pose.x, pose.y, 0.0],
         yaw_quat(pose.yaw),
     );
     w.finish()
 }
 
+/// sensor_msgs/CameraInfo for the synthetic camera (plumb_bob, no distortion).
+fn encode_camera_info(stamp: Stamp) -> Vec<u8> {
+    let mut w = Writer::with_capacity(400);
+    header(&mut w, stamp, "camera_optical_frame");
+    w.u32(CAM_H as u32).u32(CAM_W as u32).string("plumb_bob");
+    w.seq_len(5);
+    for _ in 0..5 {
+        w.f64(0.0);
+    }
+    let (cx, cy) = (CAM_W as f64 / 2.0, CAM_H as f64 / 2.0);
+    for v in [CAM_F, 0.0, cx, 0.0, CAM_F, cy, 0.0, 0.0, 1.0] {
+        w.f64(v);
+    }
+    for i in 0..9 {
+        w.f64(if i % 4 == 0 { 1.0 } else { 0.0 });
+    }
+    for v in [CAM_F, 0.0, cx, 0.0, 0.0, CAM_F, cy, 0.0, 0.0, 0.0, 1.0, 0.0] {
+        w.f64(v);
+    }
+    w.u32(0).u32(0).u32(0).u32(0).u32(0).u32(0).bool(false);
+    w.finish()
+}
+
+/// Ray-casts the room from the robot's camera (base_link + (0.28, 0, 0.4), looking
+/// along +x): an rgb8 colour image (walls, chequered floor, ceiling, the map pillar)
+/// and a 16UC1 depth image in millimetres. Same intrinsics as `encode_camera_info`.
+fn encode_camera_images(stamp: Stamp, robot: Pose2D) -> (Vec<u8>, Vec<u8>) {
+    let (cx, cy) = (CAM_W as f64 / 2.0, CAM_H as f64 / 2.0);
+    let cam_x = robot.x + 0.28 * robot.yaw.cos();
+    let cam_y = robot.y + 0.28 * robot.yaw.sin();
+    let cam_z = 0.4;
+    let mut rgb = vec![0u8; CAM_W * CAM_H * 3];
+    let mut depth = vec![0u8; CAM_W * CAM_H * 2];
+    for v in 0..CAM_H {
+        for u in 0..CAM_W {
+            // Optical frame: x right, y down, z forward → camera_link: x fwd, y left, z up.
+            let dx_o = (u as f64 + 0.5 - cx) / CAM_F;
+            let dy_o = (v as f64 + 0.5 - cy) / CAM_F;
+            let norm = (dx_o * dx_o + dy_o * dy_o + 1.0).sqrt();
+            let (fwd, left, up) = (1.0 / norm, -dx_o / norm, -dy_o / norm);
+            let wx = fwd * robot.yaw.cos() - left * robot.yaw.sin();
+            let wy = fwd * robot.yaw.sin() + left * robot.yaw.cos();
+            let wz = up;
+            // Candidate hits: floor (z = 0), ceiling, walls, pillar.
+            let mut t = f64::INFINITY;
+            let mut color = [40u8, 40, 48];
+            if wz < -1e-6 {
+                let tf = -cam_z / wz;
+                let (hx, hy) = (cam_x + wx * tf, cam_y + wy * tf);
+                let check = ((hx.floor() as i64 + hy.floor() as i64) & 1) == 0;
+                t = tf;
+                color = if check {
+                    [200, 200, 200]
+                } else {
+                    [150, 150, 160]
+                };
+            } else if wz > 1e-6 {
+                t = (ROOM_CEILING - cam_z) / wz;
+                color = [70, 70, 80];
+            }
+            let horiz = (wx * wx + wy * wy).sqrt();
+            if horiz > 1e-9 {
+                let dist = ray_to_walls(cam_x, cam_y, wy.atan2(wx));
+                let tw = dist / horiz;
+                if tw < t {
+                    t = tw;
+                    let (hx, hy) = (cam_x + wx * tw, cam_y + wy * tw);
+                    let stripe = (((hx + hy) * 2.0).floor() as i64 & 1) == 0;
+                    color = if stripe {
+                        [120, 150, 200]
+                    } else {
+                        [90, 110, 160]
+                    };
+                }
+                // pillar at (2.5, -1.5), r 0.3, 1.2 m tall
+                let (px, py, pr) = (2.5, -1.5, 0.3);
+                let (ox, oy) = (cam_x - px, cam_y - py);
+                let b = ox * wx + oy * wy;
+                let c = ox * ox + oy * oy - pr * pr;
+                let disc = b * b - c * horiz * horiz;
+                if disc > 0.0 {
+                    let tp = (-b - disc.sqrt()) / (horiz * horiz);
+                    if tp > 0.0 && tp < t && cam_z + wz * tp <= 1.2 {
+                        t = tp;
+                        color = [200, 90, 60];
+                    }
+                }
+            }
+            let i = v * CAM_W + u;
+            rgb[i * 3..i * 3 + 3].copy_from_slice(&color);
+            // Depth along the optical axis (z), in mm; 0 = no return.
+            let z_mm = if t.is_finite() {
+                (t * fwd * 1000.0).min(65535.0) as u16
+            } else {
+                0
+            };
+            depth[i * 2..i * 2 + 2].copy_from_slice(&z_mm.to_le_bytes());
+        }
+    }
+    (
+        encode_image(stamp, "rgb8", 3, &rgb),
+        encode_image(stamp, "16UC1", 2, &depth),
+    )
+}
+
+fn encode_image(stamp: Stamp, encoding: &str, bpp: usize, data: &[u8]) -> Vec<u8> {
+    let mut w = Writer::with_capacity(data.len() + 64);
+    header(&mut w, stamp, "camera_optical_frame");
+    w.u32(CAM_H as u32)
+        .u32(CAM_W as u32)
+        .string(encoding)
+        .u8(0)
+        .u32((CAM_W * bpp) as u32);
+    w.seq_len(data.len()).bytes(data);
+    w.finish()
+}
+
+fn encode_string(s: &str) -> Vec<u8> {
+    let mut w = Writer::with_capacity(s.len() + 8);
+    w.string(s);
+    w.finish()
+}
+
 fn encode_tf_static(stamp: Stamp) -> Vec<u8> {
     let mut w = Writer::new();
-    w.seq_len(2);
+    w.seq_len(8);
+    let identity = [0.0, 0.0, 0.0, 1.0];
+    // Robot links (see fixtures/robot_description/tier1_robot.urdf joints).
+    transform(
+        &mut w,
+        stamp,
+        "base_footprint",
+        "base_link",
+        [0.0; 3],
+        identity,
+    );
+    transform(
+        &mut w,
+        stamp,
+        "base_link",
+        "wheel_left_link",
+        [0.0, 0.28, 0.127],
+        identity,
+    );
+    transform(
+        &mut w,
+        stamp,
+        "base_link",
+        "wheel_right_link",
+        [0.0, -0.28, 0.127],
+        identity,
+    );
+    transform(
+        &mut w,
+        stamp,
+        "base_link",
+        "caster_front_link",
+        [0.22, 0.0, 0.05],
+        identity,
+    );
+    transform(
+        &mut w,
+        stamp,
+        "base_link",
+        "camera_link",
+        [0.28, 0.0, 0.4],
+        identity,
+    );
+    // Optical frame: z forward, x right, y down (rpy -90°, 0, -90°).
+    transform(
+        &mut w,
+        stamp,
+        "camera_link",
+        "camera_optical_frame",
+        [0.0; 3],
+        [-0.5, 0.5, -0.5, 0.5],
+    );
     transform(
         &mut w,
         stamp,
@@ -559,6 +825,126 @@ fn encode_path(stamp: Stamp, current: Pose2D) -> Vec<u8> {
             a + std::f64::consts::FRAC_PI_2,
         );
     }
+    w.finish()
+}
+
+fn covariance(w: &mut Writer, diag: [f64; 6], xy: f64) {
+    for (r, d) in diag.iter().enumerate() {
+        for c in 0..6 {
+            let v = if r == c {
+                *d
+            } else if (r == 0 && c == 1) || (r == 1 && c == 0) {
+                xy
+            } else {
+                0.0
+            };
+            w.f64(v);
+        }
+    }
+}
+
+/// nav_msgs/Odometry of the circling robot (odom → base_link) with a 2-D covariance.
+fn encode_odometry(stamp: Stamp, current: Pose2D) -> Vec<u8> {
+    let mut w = Writer::with_capacity(700);
+    header(&mut w, stamp, "odom");
+    w.string("base_link");
+    pose(&mut w, current.x, current.y, current.yaw);
+    covariance(&mut w, [0.02, 0.02, 0.0, 0.0, 0.0, 0.01], 0.0);
+    let v = CIRCLE_RADIUS * std::f64::consts::TAU / CIRCLE_PERIOD_S;
+    for val in [
+        v,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        std::f64::consts::TAU / CIRCLE_PERIOD_S,
+    ] {
+        w.f64(val);
+    }
+    covariance(&mut w, [0.001; 6], 0.0);
+    w.finish()
+}
+
+/// geometry_msgs/PoseWithCovarianceStamped near the robot with a full 3-D covariance.
+fn encode_amcl_pose(stamp: Stamp, current: Pose2D, phase: u32) -> Vec<u8> {
+    let mut w = Writer::with_capacity(400);
+    header(&mut w, stamp, "map");
+    let wobble = (phase as f64 * 0.7).sin() * 0.05;
+    pose(
+        &mut w,
+        current.x + wobble,
+        current.y - wobble,
+        current.yaw + 0.05 * wobble,
+    );
+    covariance(&mut w, [0.05, 0.08, 0.01, 0.01, 0.02, 0.05], 0.02);
+    w.finish()
+}
+
+/// geometry_msgs/PointStamped orbiting the goal.
+fn encode_point_stamped(stamp: Stamp, current: Pose2D, phase: u32) -> Vec<u8> {
+    let mut w = Writer::with_capacity(64);
+    header(&mut w, stamp, "map");
+    let a = current.yaw - std::f64::consts::FRAC_PI_2 + std::f64::consts::PI;
+    let t = phase as f64 * 0.3;
+    w.f64(CIRCLE_RADIUS * a.cos() + 0.5 * t.cos())
+        .f64(CIRCLE_RADIUS * a.sin() + 0.5 * t.sin())
+        .f64(0.3 + 0.1 * (2.0 * t).sin());
+    w.finish()
+}
+
+/// geometry_msgs/PolygonStamped: the robot footprint (0.6 × 0.5 m, rounded) in base_link.
+fn encode_footprint(stamp: Stamp) -> Vec<u8> {
+    let mut w = Writer::with_capacity(160);
+    header(&mut w, stamp, "base_link");
+    let pts: [(f32, f32); 8] = [
+        (0.30, 0.20),
+        (0.25, 0.25),
+        (-0.25, 0.25),
+        (-0.30, 0.20),
+        (-0.30, -0.20),
+        (-0.25, -0.25),
+        (0.25, -0.25),
+        (0.30, -0.20),
+    ];
+    w.seq_len(pts.len());
+    for (x, y) in pts {
+        w.f32(x).f32(y).f32(0.0);
+    }
+    w.finish()
+}
+
+/// nav_msgs/GridCells: a pulsing ring of 0.1 m cells around the room centre.
+fn encode_grid_cells(stamp: Stamp, phase: u32) -> Vec<u8> {
+    let mut w = Writer::with_capacity(8000);
+    header(&mut w, stamp, "map");
+    w.f32(0.1).f32(0.1);
+    let r0 = 1.0 + 0.3 * (phase as f64 * 0.5).sin();
+    let mut cells: Vec<(f32, f32)> = Vec::new();
+    for i in -20..20 {
+        for j in -20..20 {
+            let x = i as f64 * 0.1 + 0.05;
+            let y = j as f64 * 0.1 + 0.05;
+            let d = (x * x + y * y).sqrt();
+            if d >= r0 && d < r0 + 0.25 {
+                cells.push((x as f32, y as f32));
+            }
+        }
+    }
+    w.seq_len(cells.len());
+    for (x, y) in cells {
+        w.f32(x).f32(y).f32(0.0);
+    }
+    w.finish()
+}
+
+/// sensor_msgs/Range from the laser frame straight ahead (ultrasound, 0.5 rad cone).
+fn encode_range(stamp: Stamp, current: Pose2D) -> Vec<u8> {
+    let mut w = Writer::with_capacity(64);
+    header(&mut w, stamp, "laser");
+    let lx = current.x + 0.2 * current.yaw.cos();
+    let ly = current.y + 0.2 * current.yaw.sin();
+    let r = ray_to_walls(lx, ly, current.yaw).min(4.0);
+    w.u8(0).f32(0.5).f32(0.05).f32(4.0).f32(r as f32);
     w.finish()
 }
 
@@ -1082,6 +1468,55 @@ mod tests {
     }
 
     #[test]
+    fn tier1_messages_decode() {
+        use webrvizlite_core::msgs::{geometry, nav, sensor};
+        let pose = Pose2D {
+            x: 1.0,
+            y: 2.0,
+            yaw: 0.5,
+        };
+        let o = nav::decode_odometry(&encode_odometry(now_stamp(), pose)).unwrap();
+        assert_eq!(o.child_frame_id, "base_link");
+        assert_eq!(o.pose_covariance[0], 0.02);
+        let p =
+            geometry::decode_pose_with_covariance_stamped(&encode_amcl_pose(now_stamp(), pose, 3))
+                .unwrap();
+        assert_eq!(p.covariance[1], 0.02);
+        assert_eq!(
+            geometry::decode_point_stamped(&encode_point_stamped(now_stamp(), pose, 1))
+                .unwrap()
+                .header
+                .frame_id,
+            "map"
+        );
+        assert_eq!(
+            geometry::decode_polygon_stamped(&encode_footprint(now_stamp()))
+                .unwrap()
+                .points
+                .len(),
+            24
+        );
+        let g = nav::decode_grid_cells(&encode_grid_cells(now_stamp(), 0)).unwrap();
+        assert!(g.cells.len() > 30 && g.cell_width == 0.1);
+        let r = sensor::decode_range(&encode_range(now_stamp(), pose)).unwrap();
+        assert!(r.range > 0.0 && r.range <= 4.0);
+        let (rgb, depth) = encode_camera_images(now_stamp(), pose);
+        let img = sensor::decode_image(&rgb).unwrap();
+        assert_eq!(
+            (
+                img.width as usize,
+                img.height as usize,
+                img.encoding.as_str()
+            ),
+            (CAM_W, CAM_H, "rgb8")
+        );
+        let d = sensor::decode_image(&depth).unwrap();
+        assert_eq!((d.encoding.as_str(), d.step as usize), ("16UC1", CAM_W * 2));
+        let ci = sensor::decode_camera_info(&encode_camera_info(now_stamp())).unwrap();
+        assert_eq!(ci.k[0], CAM_F);
+    }
+
+    #[test]
     fn tf_decodes() {
         let bytes = encode_tf(
             Stamp { sec: 0, nanosec: 0 },
@@ -1093,7 +1528,7 @@ mod tests {
         );
         let mut r = Reader::new(&bytes).unwrap();
         assert_eq!(r.seq_len(1).unwrap(), 2);
-        for expected in [("map", "odom", 0.0), ("odom", "base_link", 1.0)] {
+        for expected in [("map", "odom", 0.0), ("odom", "base_footprint", 1.0)] {
             r.i32().unwrap();
             r.u32().unwrap();
             assert_eq!(r.str().unwrap(), expected.0);

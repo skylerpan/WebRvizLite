@@ -35,6 +35,17 @@ export function measure<T>(name: string, fn: () => T): T {
   }
 }
 
+/** Like `measure` for a promise-returning function (records when it settles). */
+export async function measureAsync<T>(name: string, fn: () => Promise<T>): Promise<T> {
+  if (!enabled) return fn();
+  const t0 = performance.now();
+  try {
+    return await fn();
+  } finally {
+    record(name, performance.now() - t0);
+  }
+}
+
 export function record(name: string, ms: number) {
   if (!enabled) return;
   let s = sections.get(name);

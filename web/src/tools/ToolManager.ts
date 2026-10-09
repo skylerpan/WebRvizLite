@@ -6,7 +6,14 @@
 import { createSignal, type Accessor } from 'solid-js';
 import { MOVE_CAMERA_INFO, MoveCameraTool } from './moveCamera';
 import { UnknownTool, isTool } from './Tool';
-import type { Tool, ToolClassInfo, ToolContext } from './types';
+import { GroupProperty } from '../property/Property';
+import { SET_GOAL_INFO, SetGoalTool } from './setGoal';
+import { SET_INITIAL_POSE_INFO, SetInitialPoseTool } from './setInitialPose';
+import { SELECT_INFO, SelectTool } from './select';
+import { FOCUS_CAMERA_INFO, FocusCameraTool } from './focusCamera';
+import { MEASURE_INFO, MeasureTool } from './measure';
+import { PUBLISH_POINT_INFO, PublishPointTool } from './publishPoint';
+import type { Tool, ToolClassInfo, ToolContext, ViewportServices } from './types';
 import type { YamlValue } from '../property/types';
 import type { ViewportPointerEvent } from '../views/types';
 
@@ -23,16 +30,48 @@ export class ToolManager {
   private readonly classes = new Map<string, { info: ToolClassInfo; create: () => Tool }>();
   readonly tools: Accessor<readonly Tool[]>;
   private readonly setTools: (t: readonly Tool[]) => void;
+  /** Root of the Tool Properties panel: one child per tool that has properties (rviz ToolPropertiesPanel). */
+  readonly propertiesRoot = new GroupProperty('Tool Properties', null);
   readonly current: Accessor<Tool | null>;
   private readonly setCurrentSignal: (t: Tool | null) => void;
   private readonly ctx: ToolContext;
+  private viewport_: ViewportServices | null = null;
 
-  constructor(ctx: Omit<ToolContext, 'revertToDefault'>) {
-    this.ctx = { ...ctx, revertToDefault: () => this.revertToDefault() };
-    [this.tools, this.setTools] = createSignal<readonly Tool[]>([]);
+  constructor(ctx: Omit<ToolContext, 'revertToDefault' | 'viewport'>) {
+    this.ctx = { ...ctx, viewport: () => this.viewport_, revertToDefault: () => this.revertToDefault() };
+    const [tools, setTools] = createSignal<readonly Tool[]>([]);
+    this.tools = tools;
+    this.setTools = (t) => {
+      setTools(t);
+      this.syncPropertiesRoot();
+    };
     [this.current, this.setCurrentSignal] = createSignal<Tool | null>(null);
     this.register(MOVE_CAMERA_INFO, () => new MoveCameraTool());
+    this.register(SET_INITIAL_POSE_INFO, () => new SetInitialPoseTool());
+    this.register(SET_GOAL_INFO, () => new SetGoalTool());
+    this.register(SELECT_INFO, () => new SelectTool());
+    this.register(FOCUS_CAMERA_INFO, () => new FocusCameraTool());
+    this.register(MEASURE_INFO, () => new MeasureTool());
+    this.register(PUBLISH_POINT_INFO, () => new PublishPointTool());
     this.load(null);
+  }
+
+  private syncPropertiesRoot() {
+    const wanted = this.tools().filter((t) => t.available && t.properties.children().length > 0).map((t) => t.properties);
+    for (const c of this.propertiesRoot.children().slice()) if (!wanted.includes(c as GroupProperty)) this.propertiesRoot.removeChild(c);
+    for (const p of wanted) this.propertiesRoot.addChild(p);
+  }
+
+  /** The 3D view registers itself once mounted; the active tool is re-activated so it can draw helpers. */
+  attachViewport(v: ViewportServices | null) {
+    const cur = this.current();
+    cur?.deactivate();
+    this.viewport_ = v;
+    if (v) cur?.activate();
+  }
+
+  viewport(): ViewportServices | null {
+    return this.viewport_;
   }
 
   register(info: ToolClassInfo, create: () => Tool) {

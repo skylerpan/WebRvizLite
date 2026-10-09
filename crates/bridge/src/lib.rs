@@ -2,7 +2,8 @@
 //!
 //! The server only ever talks to [`Transport`]. Implementations:
 //! - `r2r` (feature `r2r`): real ROS 2 node via rcl; needs a sourced ROS 2 at build time.
-//! - `mock`: synthetic `/scan`, `/tf`, `/tf_static`, `/clock` for development without ROS.
+//! - `mock`: a synthetic navigation scene (`/scan`, `/points`, `/tf`, `/odom`, markers, map,
+//!   camera, ... see `mock.rs`) for development without ROS.
 //!
 //! The trait is deliberately narrow so a pure-Rust DDS backend can replace r2r later.
 
