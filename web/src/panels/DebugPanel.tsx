@@ -60,6 +60,7 @@ export function DebugPanel(_props: PanelProps) {
           <Show when={bridge.hello()} fallback="not connected">
             {(h) => <>server v{h().version} · {h().mock ? 'mock' : h().ros_distro ?? 'ros'} · sim time {h().use_sim_time ? 'on' : 'off'}</>}
           </Show>
+          {' · wasm memory '}{fmtBytes(bridge.wasmBytes())}
         </span>
         <Show when={bridge.lastError()}>{(e) => <span class="wrl-status-err">{e()}</span>}</Show>
       </div>

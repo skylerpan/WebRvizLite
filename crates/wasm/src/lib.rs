@@ -2,6 +2,8 @@
 //! in `webrvizlite-core` so it can be unit-tested natively.
 
 // wasm-bindgen's getter_with_clone generates `.clone()` on Copy fields too.
+// Array fields are private and moved out with `take_*` (one copy into JS,
+// no Rust-side clone); the JS side frees the object afterwards.
 #![allow(clippy::clone_on_copy)]
 
 use wasm_bindgen::prelude::*;
@@ -278,9 +280,23 @@ pub struct OccupancyGridData {
     pub width: u32,
     pub height: u32,
     /// Origin pose of cell (0,0) in the message frame: x y z qx qy qz qw.
-    pub origin: Vec<f64>,
+    origin: Vec<f64>,
     /// `width * height` bytes, row-major, int8 reinterpreted as u8 (-1 → 255).
-    pub data: Vec<u8>,
+    data: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl OccupancyGridData {
+    /// Moves `origin` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeOrigin)]
+    pub fn take_origin(&mut self) -> Vec<f64> {
+        std::mem::take(&mut self.origin)
+    }
+    /// Moves `data` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeData)]
+    pub fn take_data(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.data)
+    }
 }
 
 #[wasm_bindgen(getter_with_clone)]
@@ -291,7 +307,16 @@ pub struct OccupancyGridUpdateData {
     pub y: i32,
     pub width: u32,
     pub height: u32,
-    pub data: Vec<u8>,
+    data: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl OccupancyGridUpdateData {
+    /// Moves `data` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeData)]
+    pub fn take_data(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.data)
+    }
 }
 
 /// Poses in the fixed frame: positions `xyz` × n, orientations `xyzw` × n.
@@ -300,8 +325,22 @@ pub struct PosesData {
     pub frame_id: String,
     pub stamp_ns: u64,
     pub tf_status: u8,
-    pub positions: Vec<f32>,
-    pub orientations: Vec<f32>,
+    positions: Vec<f32>,
+    orientations: Vec<f32>,
+}
+
+#[wasm_bindgen]
+impl PosesData {
+    /// Moves `positions` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePositions)]
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.positions)
+    }
+    /// Moves `orientations` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeOrientations)]
+    pub fn take_orientations(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.orientations)
+    }
 }
 
 fn poses_data(
@@ -339,12 +378,41 @@ pub struct PoseCovData {
     pub stamp_ns: u64,
     pub tf_status: u8,
     pub child_frame_id: String,
-    pub positions: Vec<f32>,
-    pub orientations: Vec<f32>,
-    pub covariance: Vec<f64>,
-    pub ellipsoid: Vec<f32>,
-    pub orientation: Vec<f32>,
+    positions: Vec<f32>,
+    orientations: Vec<f32>,
+    covariance: Vec<f64>,
+    ellipsoid: Vec<f32>,
+    orientation: Vec<f32>,
     pub is_2d: bool,
+}
+
+#[wasm_bindgen]
+impl PoseCovData {
+    /// Moves `positions` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePositions)]
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.positions)
+    }
+    /// Moves `orientations` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeOrientations)]
+    pub fn take_orientations(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.orientations)
+    }
+    /// Moves `covariance` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeCovariance)]
+    pub fn take_covariance(&mut self) -> Vec<f64> {
+        std::mem::take(&mut self.covariance)
+    }
+    /// Moves `ellipsoid` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeEllipsoid)]
+    pub fn take_ellipsoid(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.ellipsoid)
+    }
+    /// Moves `orientation` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeOrientation)]
+    pub fn take_orientation(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.orientation)
+    }
 }
 
 /// Points (xyz × n) in the fixed frame.
@@ -353,7 +421,16 @@ pub struct PointsData {
     pub frame_id: String,
     pub stamp_ns: u64,
     pub tf_status: u8,
-    pub positions: Vec<f32>,
+    positions: Vec<f32>,
+}
+
+#[wasm_bindgen]
+impl PointsData {
+    /// Moves `positions` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePositions)]
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.positions)
+    }
 }
 
 #[wasm_bindgen(getter_with_clone)]
@@ -361,9 +438,18 @@ pub struct GridCellsData {
     pub frame_id: String,
     pub stamp_ns: u64,
     pub tf_status: u8,
-    pub positions: Vec<f32>,
+    positions: Vec<f32>,
     pub cell_width: f32,
     pub cell_height: f32,
+}
+
+#[wasm_bindgen]
+impl GridCellsData {
+    /// Moves `positions` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePositions)]
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.positions)
+    }
 }
 
 #[wasm_bindgen(getter_with_clone)]
@@ -372,12 +458,26 @@ pub struct RangeData {
     pub stamp_ns: u64,
     pub tf_status: u8,
     /// Sensor pose in the fixed frame: xyz + xyzw.
-    pub positions: Vec<f32>,
-    pub orientations: Vec<f32>,
+    positions: Vec<f32>,
+    orientations: Vec<f32>,
     pub range: f32,
     pub field_of_view: f32,
     pub min_range: f32,
     pub max_range: f32,
+}
+
+#[wasm_bindgen]
+impl RangeData {
+    /// Moves `positions` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePositions)]
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.positions)
+    }
+    /// Moves `orientations` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeOrientations)]
+    pub fn take_orientations(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.orientations)
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -458,7 +558,16 @@ pub struct ImageData {
     pub width: u32,
     pub height: u32,
     pub encoding: String,
-    pub rgba: Vec<u8>,
+    rgba: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl ImageData {
+    /// Moves `rgba` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeRgba)]
+    pub fn take_rgba(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.rgba)
+    }
 }
 
 /// Per-subscription image converter (keeps the depth normalisation history).
@@ -531,13 +640,37 @@ pub struct CameraInfoData {
     pub stamp_ns: u64,
     pub width: u32,
     pub height: u32,
-    pub k: Vec<f64>,
-    pub p: Vec<f64>,
-    pub d: Vec<f64>,
+    k: Vec<f64>,
+    p: Vec<f64>,
+    d: Vec<f64>,
     pub binning_x: u32,
     pub binning_y: u32,
     /// x_offset, y_offset, height, width
-    pub roi: Vec<u32>,
+    roi: Vec<u32>,
+}
+
+#[wasm_bindgen]
+impl CameraInfoData {
+    /// Moves `k` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeK)]
+    pub fn take_k(&mut self) -> Vec<f64> {
+        std::mem::take(&mut self.k)
+    }
+    /// Moves `p` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeP)]
+    pub fn take_p(&mut self) -> Vec<f64> {
+        std::mem::take(&mut self.p)
+    }
+    /// Moves `d` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeD)]
+    pub fn take_d(&mut self) -> Vec<f64> {
+        std::mem::take(&mut self.d)
+    }
+    /// Moves `roi` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeRoi)]
+    pub fn take_roi(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.roi)
+    }
 }
 
 #[wasm_bindgen(js_name = decodeCameraInfo)]
@@ -753,9 +886,9 @@ pub struct PointCloudData {
     pub tf_status: u8,
     pub count: u32,
     /// xyz × count
-    pub positions: Vec<f32>,
+    positions: Vec<f32>,
     /// rgb × count
-    pub colors: Vec<u8>,
+    colors: Vec<u8>,
     /// JSON array of channel names available for the Intensity transformer.
     pub channels_json: String,
     /// JSON array of transformer names supported by this cloud.
@@ -764,6 +897,20 @@ pub struct PointCloudData {
     pub transformer: String,
     pub min: f32,
     pub max: f32,
+}
+
+#[wasm_bindgen]
+impl PointCloudData {
+    /// Moves `positions` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePositions)]
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.positions)
+    }
+    /// Moves `colors` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeColors)]
+    pub fn take_colors(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.colors)
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -943,10 +1090,29 @@ pub const MARKER_STRIDE: usize = 24;
 #[wasm_bindgen(getter_with_clone)]
 pub struct MarkerArrayData {
     pub count: u32,
-    pub numeric: Vec<f64>,
+    numeric: Vec<f64>,
     pub strings_json: String,
-    pub points: Vec<f32>,
-    pub colors: Vec<u8>,
+    points: Vec<f32>,
+    colors: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl MarkerArrayData {
+    /// Moves `numeric` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeNumeric)]
+    pub fn take_numeric(&mut self) -> Vec<f64> {
+        std::mem::take(&mut self.numeric)
+    }
+    /// Moves `points` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takePoints)]
+    pub fn take_points(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.points)
+    }
+    /// Moves `colors` out (one copy into JS); the object must then be freed.
+    #[wasm_bindgen(js_name = takeColors)]
+    pub fn take_colors(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.colors)
+    }
 }
 
 fn pack_markers(

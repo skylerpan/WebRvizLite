@@ -1,4 +1,4 @@
-import { createSignal } from 'solid-js';
+import { createSignal, type Accessor, type Setter } from 'solid-js';
 import type { DataMessage, Decoder, Hello, MainToWorker, QosProfile, SubscriptionStats, TopicInfo, WorkerToMain, WsState } from './messages';
 import { TfSnapshot } from '../render/tf';
 import { measure } from '../render/perf';
@@ -41,6 +41,8 @@ export class BridgeClient {
   readonly wasmVersion;
   readonly topics;
   readonly stats;
+  /** Size of the worker's wasm linear memory (bytes), updated with `stats`. */
+  readonly wasmBytes: Accessor<number>;
   readonly lastError;
   /** Latest server clock: ROS time and server wall time, both ns since epoch. */
   readonly clock;
@@ -52,6 +54,7 @@ export class BridgeClient {
   private readonly setWasmVersion;
   private readonly setTopics;
   private readonly setStats;
+  private readonly setWasmBytes: Setter<number>;
   private readonly setLastError;
   private readonly setClock;
   private readonly setTransport;
@@ -62,6 +65,7 @@ export class BridgeClient {
     [this.wasmVersion, this.setWasmVersion] = createSignal<string | null>(null);
     [this.topics, this.setTopics] = createSignal<TopicInfo[]>([]);
     [this.stats, this.setStats] = createSignal<SubscriptionStats[]>([]);
+    [this.wasmBytes, this.setWasmBytes] = createSignal(0);
     [this.lastError, this.setLastError] = createSignal<string | null>(null);
     [this.clock, this.setClock] = createSignal<{ rosTimeNs: bigint; wallTimeNs: bigint } | null>(null);
     [this.transport, this.setTransport] = createSignal<{ wt: 'off' | 'connecting' | 'on' | 'failed'; detail?: string }>({ wt: 'off' });
@@ -93,6 +97,7 @@ export class BridgeClient {
         break;
       case 'stats':
         this.setStats(msg.subscriptions);
+        this.setWasmBytes(msg.wasmBytes);
         break;
       case 'data':
         if (this.handlers.has(msg.id)) this.pending.push(msg.id, msg, this.latestOnly.get(msg.id) === true);

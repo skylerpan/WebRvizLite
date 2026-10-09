@@ -134,7 +134,8 @@ export type WorkerToMain =
   | { type: 'topics'; topics: TopicInfo[] }
   | { type: 'clock'; rosTimeNs: bigint; wallTimeNs: bigint }
   | { type: 'error'; id: number | null; message: string }
-  | { type: 'stats'; subscriptions: SubscriptionStats[] }
+  /** `wasmBytes`: current size of the worker's wasm linear memory (Debug panel). */
+  | { type: 'stats'; subscriptions: SubscriptionStats[]; wasmBytes: number }
   | { type: 'point_info'; requestId: number; info: { names: string[]; values: number[] } | null }
   /** WebTransport session state for the status bar. */
   | { type: 'transport'; wt: 'off' | 'connecting' | 'on' | 'failed'; detail?: string }

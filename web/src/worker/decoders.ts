@@ -2,6 +2,10 @@
  * Worker-side decoders: CDR payload → transferable, GPU-ready data. Each
  * decoder also transforms into the fixed frame when the message carries a
  * header (spec §3: the main thread never sees message objects).
+ *
+ * Every wasm result object is read exactly once per array (`take*` moves the
+ * Vec out with a single copy), the same buffers go into the transfer list, and
+ * the object is freed right away instead of waiting for the FinalizationRegistry.
  */
 
 import { ImageConverter, decodeCameraInfo, decodeString, type TfBuffer } from '../wasm/pkg/webrvizlite';
@@ -25,6 +29,26 @@ export function decodeMessage(sub: Subscription, payload: Uint8Array, tf: TfBuff
   const fn = registry.get(sub.decoder);
   if (!fn) throw new Error(`no decoder registered for "${sub.decoder}"`);
   return fn(sub, payload, tf, fixedFrame);
+}
+
+/** Runs `use` on a wasm result object and frees it afterwards, whatever happens. */
+function consume<T extends { free(): void }, R>(obj: T, use: (o: T) => R): R {
+  try {
+    return use(obj);
+  } finally {
+    obj.free();
+  }
+}
+
+/** Decoder options serialised once per options object (the worker replaces `sub.options` on every change). */
+function optionsJson(sub: Subscription, key: string): string {
+  if (sub.optionsJson?.for !== sub.options) sub.optionsJson = { for: sub.options, byKey: new Map() };
+  let json = sub.optionsJson.byKey.get(key);
+  if (json === undefined) {
+    json = JSON.stringify(sub.options[key] ?? {});
+    sub.optionsJson.byKey.set(key, json);
+  }
+  return json;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,27 +86,43 @@ function tfMeta(status: number, frameId: string, fixedFrame: string): Pick<Decod
   return { inFixedFrame: true, tfError: status === 1 ? `Message stamp outside TF history; used latest transform` : null };
 }
 
-registerDecoder('occupancy_grid', (_sub, payload, tf) => {
-  const g = tf.decodeOccupancyGrid(payload);
-  const data: OccupancyGridMsg = { resolution: g.resolution, width: g.width, height: g.height, origin: g.origin, data: g.data };
-  const meta = { stampNs: Number(g.stamp_ns), frameId: g.frame_id, inFixedFrame: false, tfError: null };
-  return { meta, data, transfer: [g.data.buffer, g.origin.buffer] };
-});
+registerDecoder('occupancy_grid', (_sub, payload, tf) =>
+  consume(tf.decodeOccupancyGrid(payload), (g) => {
+    const origin = g.takeOrigin();
+    const cells = g.takeData();
+    const data: OccupancyGridMsg = { resolution: g.resolution, width: g.width, height: g.height, origin, data: cells };
+    const meta = { stampNs: Number(g.stamp_ns), frameId: g.frame_id, inFixedFrame: false, tfError: null };
+    return { meta, data, transfer: [cells.buffer, origin.buffer] };
+  }));
 
-registerDecoder('occupancy_grid_update', (_sub, payload, tf) => {
-  const u = tf.decodeOccupancyGridUpdate(payload);
-  const data: OccupancyGridUpdateMsg = { x: u.x, y: u.y, width: u.width, height: u.height, data: u.data };
-  const meta = { stampNs: Number(u.stamp_ns), frameId: u.frame_id, inFixedFrame: false, tfError: null };
-  return { meta, data, transfer: [u.data.buffer] };
-});
+registerDecoder('occupancy_grid_update', (_sub, payload, tf) =>
+  consume(tf.decodeOccupancyGridUpdate(payload), (u) => {
+    const cells = u.takeData();
+    const data: OccupancyGridUpdateMsg = { x: u.x, y: u.y, width: u.width, height: u.height, data: cells };
+    const meta = { stampNs: Number(u.stamp_ns), frameId: u.frame_id, inFixedFrame: false, tfError: null };
+    return { meta, data, transfer: [cells.buffer] };
+  }));
 
-function posesResult(p: { frame_id: string; stamp_ns: bigint; tf_status: number; positions: Float32Array; orientations: Float32Array }, fixedFrame: string): DecodeResult {
-  const data: PosesMsg = { count: p.positions.length / 3, positions: p.positions, orientations: p.orientations };
-  return {
-    meta: { stampNs: Number(p.stamp_ns), frameId: p.frame_id, ...tfMeta(p.tf_status, p.frame_id, fixedFrame) },
-    data,
-    transfer: [p.positions.buffer, p.orientations.buffer],
-  };
+interface PosesLike {
+  frame_id: string;
+  stamp_ns: bigint;
+  tf_status: number;
+  takePositions(): Float32Array;
+  takeOrientations(): Float32Array;
+  free(): void;
+}
+
+function posesResult(p: PosesLike, fixedFrame: string): DecodeResult {
+  return consume(p, (o) => {
+    const positions = o.takePositions();
+    const orientations = o.takeOrientations();
+    const data: PosesMsg = { count: positions.length / 3, positions, orientations };
+    return {
+      meta: { stampNs: Number(o.stamp_ns), frameId: o.frame_id, ...tfMeta(o.tf_status, o.frame_id, fixedFrame) },
+      data,
+      transfer: [positions.buffer, orientations.buffer],
+    };
+  });
 }
 
 /** Pose + covariance visual (PoseWithCovariance / Odometry); see wasm PoseCovData. */
@@ -113,40 +153,53 @@ export interface RangeMsg extends PosesMsg {
   maxRange: number;
 }
 
-function covarianceOptions(sub: Subscription): string {
-  return JSON.stringify(sub.options.covariance ?? {});
+interface PoseCovLike extends PosesLike {
+  child_frame_id: string;
+  is_2d: boolean;
+  takeCovariance(): Float64Array;
+  takeEllipsoid(): Float32Array;
+  takeOrientation(): Float32Array;
 }
 
-function poseCovResult(p: { frame_id: string; stamp_ns: bigint; tf_status: number; child_frame_id: string; positions: Float32Array; orientations: Float32Array; covariance: Float64Array; ellipsoid: Float32Array; orientation: Float32Array; is_2d: boolean }, fixedFrame: string): DecodeResult {
-  const data: PoseCovMsg = {
-    count: 1, positions: p.positions, orientations: p.orientations, childFrameId: p.child_frame_id,
-    covariance: p.covariance, ellipsoid: p.ellipsoid, orientation: p.orientation, is2d: p.is_2d,
-  };
-  return {
-    meta: { stampNs: Number(p.stamp_ns), frameId: p.frame_id, ...tfMeta(p.tf_status, p.frame_id, fixedFrame) },
-    data,
-    transfer: [p.positions.buffer, p.orientations.buffer, p.covariance.buffer, p.ellipsoid.buffer, p.orientation.buffer],
-  };
+function poseCovResult(p: PoseCovLike, fixedFrame: string): DecodeResult {
+  return consume(p, (o) => {
+    const positions = o.takePositions();
+    const orientations = o.takeOrientations();
+    const covariance = o.takeCovariance();
+    const ellipsoid = o.takeEllipsoid();
+    const orientation = o.takeOrientation();
+    const data: PoseCovMsg = { count: 1, positions, orientations, childFrameId: o.child_frame_id, covariance, ellipsoid, orientation, is2d: o.is_2d };
+    return {
+      meta: { stampNs: Number(o.stamp_ns), frameId: o.frame_id, ...tfMeta(o.tf_status, o.frame_id, fixedFrame) },
+      data,
+      transfer: [positions.buffer, orientations.buffer, covariance.buffer, ellipsoid.buffer, orientation.buffer],
+    };
+  });
 }
 
-registerDecoder('pose_with_covariance', (sub, payload, tf, fixedFrame) => poseCovResult(tf.decodePoseWithCovariance(payload, fixedFrame, covarianceOptions(sub)), fixedFrame));
-registerDecoder('odometry', (sub, payload, tf, fixedFrame) => poseCovResult(tf.decodeOdometry(payload, fixedFrame, covarianceOptions(sub)), fixedFrame));
+registerDecoder('pose_with_covariance', (sub, payload, tf, fixedFrame) => poseCovResult(tf.decodePoseWithCovariance(payload, fixedFrame, optionsJson(sub, 'covariance')), fixedFrame));
+registerDecoder('odometry', (sub, payload, tf, fixedFrame) => poseCovResult(tf.decodeOdometry(payload, fixedFrame, optionsJson(sub, 'covariance')), fixedFrame));
 registerDecoder('point_stamped', (_sub, payload, tf, fixedFrame) => posesResult(tf.decodePointStamped(payload, fixedFrame), fixedFrame));
-registerDecoder('polygon', (_sub, payload, tf, fixedFrame) => {
-  const p = tf.decodePolygonStamped(payload, fixedFrame);
-  const data: PointsMsg = { count: p.positions.length / 3, positions: p.positions };
-  return { meta: { stampNs: Number(p.stamp_ns), frameId: p.frame_id, ...tfMeta(p.tf_status, p.frame_id, fixedFrame) }, data, transfer: [p.positions.buffer] };
-});
-registerDecoder('grid_cells', (_sub, payload, tf, fixedFrame) => {
-  const g = tf.decodeGridCells(payload, fixedFrame);
-  const data: GridCellsMsg = { count: g.positions.length / 3, positions: g.positions, cellWidth: g.cell_width, cellHeight: g.cell_height };
-  return { meta: { stampNs: Number(g.stamp_ns), frameId: g.frame_id, ...tfMeta(g.tf_status, g.frame_id, fixedFrame) }, data, transfer: [g.positions.buffer] };
-});
-registerDecoder('range', (_sub, payload, tf, fixedFrame) => {
-  const r = tf.decodeRange(payload, fixedFrame);
-  const data: RangeMsg = { count: 1, positions: r.positions, orientations: r.orientations, range: r.range, fieldOfView: r.field_of_view, minRange: r.min_range, maxRange: r.max_range };
-  return { meta: { stampNs: Number(r.stamp_ns), frameId: r.frame_id, ...tfMeta(r.tf_status, r.frame_id, fixedFrame) }, data, transfer: [r.positions.buffer, r.orientations.buffer] };
-});
+registerDecoder('polygon', (_sub, payload, tf, fixedFrame) =>
+  consume(tf.decodePolygonStamped(payload, fixedFrame), (p) => {
+    const positions = p.takePositions();
+    const data: PointsMsg = { count: positions.length / 3, positions };
+    return { meta: { stampNs: Number(p.stamp_ns), frameId: p.frame_id, ...tfMeta(p.tf_status, p.frame_id, fixedFrame) }, data, transfer: [positions.buffer] };
+  }));
+registerDecoder('grid_cells', (_sub, payload, tf, fixedFrame) =>
+  consume(tf.decodeGridCells(payload, fixedFrame), (g) => {
+    const positions = g.takePositions();
+    const data: GridCellsMsg = { count: positions.length / 3, positions, cellWidth: g.cell_width, cellHeight: g.cell_height };
+    return { meta: { stampNs: Number(g.stamp_ns), frameId: g.frame_id, ...tfMeta(g.tf_status, g.frame_id, fixedFrame) }, data, transfer: [positions.buffer] };
+  }));
+registerDecoder('range', (_sub, payload, tf, fixedFrame) =>
+  consume(tf.decodeRange(payload, fixedFrame), (r) => {
+    const positions = r.takePositions();
+    const orientations = r.takeOrientations();
+    const data: RangeMsg = { count: 1, positions, orientations, range: r.range, fieldOfView: r.field_of_view, minRange: r.min_range, maxRange: r.max_range };
+    return { meta: { stampNs: Number(r.stamp_ns), frameId: r.frame_id, ...tfMeta(r.tf_status, r.frame_id, fixedFrame) }, data, transfer: [positions.buffer, orientations.buffer] };
+  }));
+
 /** RGBA8 frame for the Image / Camera panels (the buffer is transferred). */
 export interface ImageMsg {
   width: number;
@@ -170,15 +223,20 @@ export interface CameraInfoMsg {
 
 registerDecoder('image', (sub, payload) => {
   sub.imageConverter ??= new ImageConverter();
-  const img = sub.imageConverter.convert(payload, JSON.stringify(sub.options.image ?? {}));
-  const data: ImageMsg = { width: img.width, height: img.height, encoding: img.encoding, rgba: img.rgba };
-  return { meta: { stampNs: Number(img.stamp_ns), frameId: img.frame_id, inFixedFrame: false, tfError: null }, data, transfer: [img.rgba.buffer] };
+  return consume(sub.imageConverter.convert(payload, optionsJson(sub, 'image')), (img) => {
+    const rgba = img.takeRgba();
+    const data: ImageMsg = { width: img.width, height: img.height, encoding: img.encoding, rgba };
+    return { meta: { stampNs: Number(img.stamp_ns), frameId: img.frame_id, inFixedFrame: false, tfError: null }, data, transfer: [rgba.buffer] };
+  });
 });
-registerDecoder('camera_info', (_sub, payload) => {
-  const c = decodeCameraInfo(payload);
-  const data: CameraInfoMsg = { width: c.width, height: c.height, k: c.k, p: c.p, binningX: c.binning_x, binningY: c.binning_y, roi: c.roi };
-  return { meta: { stampNs: Number(c.stamp_ns), frameId: c.frame_id, inFixedFrame: false, tfError: null }, data, transfer: [c.k.buffer, c.p.buffer, c.roi.buffer] };
-});
+registerDecoder('camera_info', (_sub, payload) =>
+  consume(decodeCameraInfo(payload), (c) => {
+    const k = c.takeK();
+    const p = c.takeP();
+    const roi = c.takeRoi();
+    const data: CameraInfoMsg = { width: c.width, height: c.height, k, p, binningX: c.binning_x, binningY: c.binning_y, roi };
+    return { meta: { stampNs: Number(c.stamp_ns), frameId: c.frame_id, inFixedFrame: false, tfError: null }, data, transfer: [k.buffer, p.buffer, roi.buffer] };
+  }));
 
 registerDecoder('string', (_sub, payload) => ({ meta: { stampNs: 0, frameId: '', inFixedFrame: true, tfError: null }, data: { text: decodeString(payload) }, transfer: [] }));
 
@@ -202,27 +260,41 @@ export interface PointCloudMsg {
   max: number;
 }
 
-function cloudResult(c: {
-  frame_id: string; stamp_ns: bigint; tf_status: number; count: number; positions: Float32Array; colors: Uint8Array;
-  channels_json: string; transformers_json: string; transformer: string; min: number; max: number;
-}, fixedFrame: string): DecodeResult {
-  const data: PointCloudMsg = {
-    count: c.count, positions: c.positions, colors: c.colors,
-    channels: JSON.parse(c.channels_json) as string[], transformers: JSON.parse(c.transformers_json) as string[],
-    transformer: c.transformer, min: c.min, max: c.max,
-  };
-  return {
-    meta: { stampNs: Number(c.stamp_ns), frameId: c.frame_id, ...tfMeta(c.tf_status, c.frame_id, fixedFrame) },
-    data,
-    transfer: [c.positions.buffer, c.colors.buffer],
-  };
+interface CloudLike {
+  frame_id: string;
+  stamp_ns: bigint;
+  tf_status: number;
+  count: number;
+  channels_json: string;
+  transformers_json: string;
+  transformer: string;
+  min: number;
+  max: number;
+  takePositions(): Float32Array;
+  takeColors(): Uint8Array;
+  free(): void;
 }
 
-const optionsJson = (sub: Subscription) => JSON.stringify(sub.options.color ?? {});
+function cloudResult(c: CloudLike, fixedFrame: string): DecodeResult {
+  return consume(c, (o) => {
+    const positions = o.takePositions();
+    const colors = o.takeColors();
+    const data: PointCloudMsg = {
+      count: o.count, positions, colors,
+      channels: JSON.parse(o.channels_json) as string[], transformers: JSON.parse(o.transformers_json) as string[],
+      transformer: o.transformer, min: o.min, max: o.max,
+    };
+    return {
+      meta: { stampNs: Number(o.stamp_ns), frameId: o.frame_id, ...tfMeta(o.tf_status, o.frame_id, fixedFrame) },
+      data,
+      transfer: [positions.buffer, colors.buffer],
+    };
+  });
+}
 
-registerDecoder('point_cloud2', (sub, payload, tf, fixedFrame) => cloudResult(tf.decodePointCloud2(payload, fixedFrame, optionsJson(sub)), fixedFrame));
-registerDecoder('laser_scan', (sub, payload, tf, fixedFrame) => cloudResult(tf.decodeLaserScan(payload, fixedFrame, optionsJson(sub)), fixedFrame));
-registerDecoder('livox_custom_msg', (sub, payload, tf, fixedFrame) => cloudResult(tf.decodeLivoxCustomMsg(payload, fixedFrame, optionsJson(sub)), fixedFrame));
+registerDecoder('point_cloud2', (sub, payload, tf, fixedFrame) => cloudResult(tf.decodePointCloud2(payload, fixedFrame, optionsJson(sub, 'color')), fixedFrame));
+registerDecoder('laser_scan', (sub, payload, tf, fixedFrame) => cloudResult(tf.decodeLaserScan(payload, fixedFrame, optionsJson(sub, 'color')), fixedFrame));
+registerDecoder('livox_custom_msg', (sub, payload, tf, fixedFrame) => cloudResult(tf.decodeLivoxCustomMsg(payload, fixedFrame, optionsJson(sub, 'color')), fixedFrame));
 
 // ---------------------------------------------------------------------------
 // Markers (M6)
@@ -248,9 +320,23 @@ export interface MarkerArrayMsg {
   colors: Uint8Array;
 }
 
-function markersResult(d: { count: number; numeric: Float64Array; strings_json: string; points: Float32Array; colors: Uint8Array }): DecodeResult {
-  const data: MarkerArrayMsg = { count: d.count, numeric: d.numeric, strings: JSON.parse(d.strings_json) as string[][], points: d.points, colors: d.colors };
-  return { meta: { stampNs: 0, frameId: '', inFixedFrame: true, tfError: null }, data, transfer: [d.numeric.buffer, d.points.buffer, d.colors.buffer] };
+interface MarkersLike {
+  count: number;
+  strings_json: string;
+  takeNumeric(): Float64Array;
+  takePoints(): Float32Array;
+  takeColors(): Uint8Array;
+  free(): void;
+}
+
+function markersResult(d: MarkersLike): DecodeResult {
+  return consume(d, (o) => {
+    const numeric = o.takeNumeric();
+    const points = o.takePoints();
+    const colors = o.takeColors();
+    const data: MarkerArrayMsg = { count: o.count, numeric, strings: JSON.parse(o.strings_json) as string[][], points, colors };
+    return { meta: { stampNs: 0, frameId: '', inFixedFrame: true, tfError: null }, data, transfer: [numeric.buffer, points.buffer, colors.buffer] };
+  });
 }
 
 registerDecoder('marker', (_sub, payload, tf, fixedFrame) => markersResult(tf.decodeMarker(payload, fixedFrame)));

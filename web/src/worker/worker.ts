@@ -40,6 +40,8 @@ export interface Subscription {
   lastPayload?: Uint8Array;
   /** Depth normalisation history for Image subscriptions. */
   imageConverter?: ImageConverter;
+  /** Decoder options serialised once per `options` object (see decoders.ts optionsJson). */
+  optionsJson?: { for: Record<string, unknown>; byKey: Map<string, string> };
   via?: 'ws' | 'wt';
   recent: Array<[number, number]>;
 }
@@ -57,6 +59,7 @@ let fixedFrame = 'map';
 /** tf snapshot time (ns); 0n = latest (Time panel Pause sets a fixed time). */
 let tfTimeNs = 0n;
 let tfBuffer: TfBuffer | null = null;
+let wasmMemory: WebAssembly.Memory | null = null;
 let lastFrameCount = -1;
 let lastNamesJson = '';
 
@@ -373,10 +376,13 @@ onmessage = (ev: MessageEvent<MainToWorker>) => {
     case 'subscribe':
       addSubscription(m.id, m.topic, m.msgType, m.qos, m.decoder, m.options ?? {}, true);
       break;
-    case 'unsubscribe':
+    case 'unsubscribe': {
       gate.release(m.id);
+      const s = subscriptions.get(m.id);
+      s?.imageConverter?.free();
       if (subscriptions.delete(m.id)) sendControl({ op: 'unsubscribe', id: m.id });
       break;
+    }
     case 'options': {
       const s = subscriptions.get(m.id);
       if (!s) break;
@@ -402,7 +408,7 @@ onmessage = (ev: MessageEvent<MainToWorker>) => {
       break;
     case 'stats':
       if (statsTimer) clearInterval(statsTimer);
-      statsTimer = m.enabled ? setInterval(() => post({ type: 'stats', subscriptions: snapshotStats() }), STATS_PERIOD_MS) : null;
+      statsTimer = m.enabled ? setInterval(() => post({ type: 'stats', subscriptions: snapshotStats(), wasmBytes: wasmMemory?.buffer.byteLength ?? 0 }), STATS_PERIOD_MS) : null;
       break;
     case 'set_fixed_frame':
       fixedFrame = m.frame;
@@ -432,7 +438,7 @@ onmessage = (ev: MessageEvent<MainToWorker>) => {
 };
 
 async function main() {
-  await init();
+  wasmMemory = (await init()).memory;
   tfBuffer = new TfBuffer(TF_CACHE_SECONDS);
   post({ type: 'wasm', version: version() });
   setTfRate(tfRateHz);
