@@ -1,6 +1,6 @@
 # 效能比較：Tier 1 vs Tier 0
 
-量測日期 2026-10-09。比較對象：
+量測日期 2026-10-09，兩輪：第一輪在獨立的乾淨 profile Chrome 視窗（DevTools Protocol），第二輪在使用者自己的 Chrome 分頁（Claude 擴充功能注入同一套探針，分頁保持前景）。兩輪結論一致；主表為第一輪，第二輪見第 7 節。比較對象：
 
 | | commit | 分支 | 內容 |
 |---|---|---|---|
@@ -9,9 +9,9 @@
 
 結論先講：
 
-- **同一個 Tier 0 場景**下，Tier 1 每幀主執行緒時間從 1.70 ms 增為 2.03 ms（+0.33 ms）。但其中 0.28 ms 來自 Tier 1 mock 的 TF tree 多了 6 個 frame（TF display 多畫 36 個物件）；把 TF display 關掉後兩版是 1.49 vs 1.54 ms，**純框架開銷（拾取登錄、Selection、Tool/View 框架）只有 +0.05 ms/幀（+3%）**。FPS、long frames、Long Tasks 都沒有變化（維持 Frame Rate 30 上限、0 long frames）。
+- **同一個 Tier 0 場景**下，Tier 1 每幀主執行緒時間從 1.70 ms 增為 2.03 ms（第二輪 1.83 → 2.12）。但其中大半來自 Tier 1 mock 的 TF tree 多了 6 個 frame（TF display 多畫 36 個物件）；把 TF display 關掉後兩版是 1.49 vs 1.54 ms（第二輪 1.54 vs 1.64），**純框架開銷（拾取登錄、Selection、Tool/View 框架）只有 +0.05–0.10 ms/幀（3–6%）**。FPS、long frames 都沒有變化（兩版同樣受 Frame Rate 30 上限、0 long frames）。
 - **WebTransport** 對主執行緒沒有可量到的成本（C−B = 0.02 ms，在誤差內）；它只改變傳輸路徑，解碼仍在 worker。
-- **Tier 1 全量場景**（22 個 display，含 Camera 第二 renderer）每幀 8.7 ms，30 秒內有 11 個 >16 ms 的幀；關掉 Camera 後 5.1 ms、0 long frames。**Camera display 的第二次場景渲染是最大的單一成本（3.4–3.6 ms/幀）**，其次是 Odometry 100 箭頭 + 100 covariance 帶來的 draw call 數（79 → 236）。
+- **Tier 1 全量場景**（22 個 display，含 Camera 第二 renderer）每幀 8.7 ms（第二輪 7.2），30 秒內有 11（第二輪 4）個 >16 ms 的幀；關掉 Camera 後 5.1 ms（第二輪 4.6）、0 long frames。**Camera display 的第二次場景渲染是最大的單一成本（2.6–3.6 ms/幀）**，其次是 Odometry 100 箭頭 + 100 covariance 帶來的 draw call 數（79 → 236）。
 - 前端 bundle gzip 後 +60 KB（+11%），wasm +26 KB gzip，server 執行檔 +4.2 MB（WebTransport/QUIC 與 TLS）。
 - 沒有發現需要立即修正的退化；建議的後續優化列在最後一節（本次只列不改）。
 
@@ -129,7 +129,7 @@ Status bar sections（最差 ms × 30 s 內呼叫次數；只顯示前 6 名，�
 
 - Tier 1 mock 的 TF tree 有 11 個 frame（Tier 0 為 5），TF display 多畫 36 個物件（30 → 66 drawables），draw call 47 → 79：TF display 在 Tier 1 的場景裡要 0.5 ms/幀（B − B2），在 Tier 0 只要 0.2 ms（A − A2）。這是 mock 資料的差異，不是程式碼的差異；TF display 本身的實作兩版相同。
 - 真正的框架差異（B2 − A2 = +0.05 ms）來自 `VisualizationManager.update()`（`web/src/displays/manager.ts`）每幀多做的 `views.update`（ViewController 框架）、`selection.update()`（`web/src/app/selection.ts`；沒有選取時是空迴圈）、fixed-frame 狀態比對，以及 render 時多 traverse `selection highlight` / `tool helpers` 兩個空 group。
-- `msg MarkerArray` 2.4 → 3.1–3.7 ms：Tier 1 的 marker 每個都會 `makePickable`（`web/src/displays/Display.ts`）登錄到 `PickRegistry` 並寫 `userData.pickId`，5,016 個 marker 每秒重建一次時可量到 +0.7–1.3 ms（1 Hz，不影響幀時間）。PointCloud2 的解碼在 worker，主執行緒成本 0.5 ms 兩版相同。
+- `msg MarkerArray`：第一輪 2.4 → 3.1–3.7 ms，第二輪 2.46 → 2.49 沒有差異，所以 Tier 1 每個 marker 的 `makePickable`（`web/src/displays/Display.ts`，登錄到 `PickRegistry` 並寫 `userData.pickId`）成本在雜訊等級（1 Hz，不影響幀時間）。PointCloud2 的解碼在 worker，主執行緒成本 0.5 ms 兩版相同。
 
 **C − B = +0.02 ms（WebTransport）**：best-effort topic 改走 datagram / uni stream 後，主執行緒看不出差異；解碼與重組都在 worker。worst frame 7.3 → 8.6 ms 的差異在單次雜訊內（C 的 3 次分別為 8.6 / 5.7 / 6.6，B 為 5.8 / 5.2 / 7.3）。
 
@@ -167,9 +167,43 @@ Status bar sections（最差 ms × 30 s 內呼叫次數；只顯示前 6 名，�
 
 1. **Camera display 節流**：`CameraDisplay.render()` 只在收到新影像、TF 變動或相機 pose 變動時重畫，或限制在 ≤15 Hz；可把 D 的 8.7 ms 降到約 6.9 ms，long frames 預期歸零。rviz 本身的 Camera 也是每幀畫，但它在獨立執行緒。
 2. **Odometry 的箭頭與 covariance 改成 InstancedMesh**：目前每支箭頭、每個橢球 / 圓盤都是獨立 mesh（Odometry 一個 display 就佔 185 個物件、主視圖 236 個 draw call 的大半）；箭頭一組、橢球一組、圓盤一組的 InstancedMesh 可把 D/E 的 render 從 4.2 ms 壓回接近 B 的 1.3 ms，Camera view 也同步受益。
-3. **MarkerArray 的 pickable 登錄**：改為整個 MarkerArray 一個 pickId + instance index（像 PointCloud 那樣），省掉每個 marker 的 `makePickable`；只影響 1 Hz 的訊息路徑（2.4 → 3.1–3.7 ms/次）。
+3. **MarkerArray 的 pickable 登錄**：改為整個 MarkerArray 一個 pickId + instance index（像 PointCloud 那樣），省掉每個 marker 的 `makePickable`；只影響 1 Hz 的訊息路徑，而且第二輪量不到差異，優先度低。
 4. **`CameraDisplay.update()` 每幀跑 `syncVisibility()`**（走一遍 `rootDisplays()` 建 Map）：改為 display 增減時才同步。目前成本在 update 的 0.05 ms 內，優先度低。
 5. `camera view` 的 `syncVisibility`/`layers` traverse 在 Visibility 切換時會 traverse 整個 display 子樹；僅在切換時發生，不需處理。
+
+## 7. 第二輪：使用者 Chrome 分頁（擴充功能）重測
+
+同一天稍後，在使用者正在使用的 Chrome 視窗（1848×1053、AnyDesk 遠端桌面連線中、分頁群組內的分頁保持前景）用 Claude 擴充功能注入同一套探針，流程相同（每情境 3 次，20 s 暖機 + 30 s 取樣，結果 POST 到本機收集器）。
+
+| 指標 | A | B | C | D | E | A2 | B2 |
+|---|---|---|---|---|---|---|---|
+| FPS 平均 / 最低 | 20.8 / 12 | 20.8 / 11 | 20.9 / 12 | 19.5 / 14 | 19.9 / 10 | 21.1 / 14 | 21.3 / 13 |
+| 每幀主執行緒 平均 ms | **1.83** | **2.12** | **2.02** | **7.18** | **4.57** | **1.54** | **1.64** |
+| 　σ（3 次） | 0.09 | 0.01 | 0.06 | 0.01 | 0.09 | 0.02 | 0.16 |
+| 　p50 / p95 / p99 | 1.7 / 3.1 / 4.1 | 1.9 / 3.6 / 4.5 | 1.8 / 3.3 / 4.7 | 6.8 / 10.9 / 14.7 | 4.3 / 6.8 / 9.1 | 1.5 / 2.6 / 3.2 | 1.5 / 2.8 / 3.6 |
+| 　最大 | 6.0 | 7.1 | 12.1 | 20.4 | 13.0 | 4.6 | 7.7 |
+| long frames（>16 ms / 30 s，3 次最大） | 0 | 0 | 0 | **4** | 0 | 0 | 0 |
+| worst frame ms（status bar） | 6.3 | 7.0 | 12.1 | 20.4 | 13.0 | 4.5 | 7.7 |
+
+每次的每幀平均：A 1.83 / 1.97 / 1.74，B 2.12 / 2.13 / 2.10，C 1.91 / 2.02 / 2.04，D 7.18 / 7.18 / 7.20，E 4.54 / 4.57 / 4.74，A2 1.55 / 1.54 / 1.51，B2 1.64 / 1.98 / 1.62。D 的 long frames 每次 3 / 4 / 1。
+
+dev build 拆分（單次）：
+
+| 平均 ms / 幀 | A Tier 0 | B Tier 1 | D tier1_scene | E D−Camera |
+|---|---|---|---|---|
+| frame 合計 | 1.87 | 2.42 | 7.61 | 5.21 |
+| 　update | 0.68 | 0.86 | 1.00 | 1.16 |
+| 　render | 1.15 | 1.47 | 3.69 | 3.89 |
+| 　camera view | – | – | 2.77 | 0.00 |
+| msg MarkerArray 平均 | 2.46 | 2.49 | 2.69 | 2.94 |
+| msg PointCloud2 平均 | 0.45 | 0.46 | 0.46 | 0.46 |
+
+與第一輪的差異：
+
+- **結論相同**：B − A = +0.29 ms，排除 TF 後 B2 − A2 = +0.10 ms；WebTransport（C）與 B 無差異；Camera 第二 renderer D − E = 2.6 ms；關掉 Camera 後 0 long frames。所有情境的排序與比例都一致。
+- **FPS 只有 20–21（第一輪 29）**：這個視窗的 rAF 節奏被 GPU process 拖慢（量測時 Chrome 的 GPU process 吃滿一顆核心，應是 AnyDesk 的畫面擷取加上較大的視窗），兩版一樣受影響，所以不影響比較，但絕對值不能和第一輪互比。每幀主執行緒時間反而略低（D 7.2 vs 8.7 ms），因為幀數少、每幀之間 GPU 佇列較空。
+- 每次都有 1 個 >50 ms 的 Long Task，發生在取樣開始（點 reset 後 Solid 重繪 status bar）之前後，與渲染無關。
+- MarkerArray 的訊息處理兩版相同（2.46 vs 2.49 ms），第一輪的 +0.7–1.3 ms 沒有重現，判定為雜訊。
 
 ## 附錄：原始數據摘要（每次取樣的每幀平均 ms）
 
@@ -185,4 +219,4 @@ Status bar sections（最差 ms × 30 s 內呼叫次數；只顯示前 6 名，�
 
 long frames 每次：D = 11 / 8 / 5，其餘全為 0。worst frame 每次：A 5.0 / 6.3 / 6.6，B 5.8 / 5.2 / 7.3，C 8.6 / 5.7 / 6.6，D 18.9 / 20.9 / 20.9，E 13.7 / 11.7 / 13.4，A2 5.5 / 5.5 / 5.6，B2 4.6 / 5.7 / 4.7。
 
-探針腳本（`cdp.mjs`、`probe-prod.js`、`probe-dev.js`、`run.sh`）與每次取樣的完整 JSON 留在量測機的工作暫存區；報告內的每個數字都來自這些檔案。
+探針腳本（`cdp.mjs`、`probe-prod.js`、`probe-dev.js`、`run.sh`，第二輪另有 `collector.mjs` 與注入用的 `inject-*.js`）與每次取樣的完整 JSON（第一輪 `res-*.json`、第二輪 `ext-*.json`）留在量測機的工作暫存區；報告內的每個數字都來自這些檔案。
