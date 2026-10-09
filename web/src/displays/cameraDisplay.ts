@@ -50,9 +50,11 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
     this.decoder = 'image';
     this.imageRendering = new EnumPropertyImpl('Image Rendering', 'background and overlay', ['background', 'overlay', 'background and overlay'], this, { description: 'Render the image behind all other geometry or overlay it on top, or both.' });
     this.overlayAlpha = new FloatPropertyImpl('Overlay Alpha', 0.5, this, { description: 'The amount of transparency to apply to the camera image when rendered as overlay.', min: 0, max: 1 });
-    this.zoomFactor = new FloatPropertyImpl('Zoom Factor', 1, this, { description: 'Set a zoom factor below 1 to see a larger part of the world, above 1 to magnify the image.', min: 0.1, max: 100 });
-    this.farPlane = new FloatPropertyImpl('Far Plane Distance', 100, this, { description: 'Set the far plane distance of the camera (defaults to 100m).', min: 0.01 });
-    this.visibility = new BoolPropertyImpl('Visibility', true, this, { description: 'Changes the visibility of other Displays in the camera view.' });
+    this.zoomFactor = new FloatPropertyImpl('Zoom Factor', 1, this, { description: 'Set a zoom factor below 1 to see a larger part of the world, above 1 to magnify the image.', min: 0.00001, max: 100000 });
+    this.farPlane = new FloatPropertyImpl('Far Plane Distance', 100, this, { description: "Geometry beyond the camera's far plane will not be rendered.", min: 0.00001, max: 100000 });
+    // camera_display.cpp inserts Visibility as the first row.
+    this.visibility = new BoolPropertyImpl('Visibility', true, null, { description: 'Changes the visibility of other Displays in the camera view.' });
+    this.addChild(this.visibility, 0);
     this.camera.matrixAutoUpdate = true;
     this.topic.onChange(() => this.resubscribeInfo());
     for (const c of this.topic.children()) c.onChange(() => this.resubscribeInfo());
@@ -109,7 +111,8 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
     if (!topic) return;
     const infoTopic = cameraInfoTopic(topic);
     this.infoSubscription = this.context.bridge.subscribe(
-      infoTopic, 'sensor_msgs/msg/CameraInfo', this.qos(), 'camera_info',
+      // camera_display.cpp subscribes CameraInfo with rclcpp::SensorDataQoS (best effort, depth 5).
+      infoTopic, 'sensor_msgs/msg/CameraInfo', { depth: 5, history: 'keep_last', reliability: 'best_effort', durability: 'volatile' }, 'camera_info',
       (m) => {
         this.info = (m as DataMessage).data as CameraInfoMsg;
         this.infoFrame = (m as DataMessage).frameId;
@@ -118,7 +121,7 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
       {},
       (message) => this.setStatus('error', 'Camera Info', message),
     );
-    this.setStatus('warn', 'Camera Info', `Waiting for CameraInfo on [${infoTopic}]`);
+    this.setStatus('warn', 'Camera Info', `Expecting Camera Info on topic [${infoTopic}]. No CameraInfo received. Topic may not exist.`);
   }
 
   private unsubscribeInfo() {
@@ -175,21 +178,41 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
     this.camera.quaternion.copy(tmpQ).multiply(OPTICAL_TO_CAMERA);
     this.camera.updateMatrixWorld();
     const info = this.info;
-    const size = panel.imageSize();
-    const w = info?.width || size.width || 640;
-    const h = info?.height || size.height || 480;
-    const fx = info?.k[0] || w;
-    const fy = info?.k[4] || fx;
-    const cx = info?.k[2] || w / 2;
-    const cy = info?.k[5] || h / 2;
+    const imageSize = panel.imageSize();
+    const w = info?.width || imageSize.width || 640;
+    const h = info?.height || imageSize.height || 480;
+    // camera_display.cpp uses the projection matrix P (binning and ROI are ignored).
+    const fx = info?.p[0] || w;
+    const fy = info?.p[5] || fx;
+    const cx = info?.p[2] || w / 2;
+    const cy = info?.p[6] || h / 2;
+    if (info && ![fx, fy, cx, cy].every(Number.isFinite)) {
+      this.setStatus('error', 'Camera Info', 'Contains invalid floating point values (nans or infs)');
+      return;
+    }
+    // Stereo right camera: P[3] / P[7] shift the projection centre (translatePosition in rviz).
+    const tx = info ? -info.p[3] / fx : 0;
+    const ty = info ? -info.p[7] / fy : 0;
+    if (tx || ty) {
+      tmpV.set(tx, -ty, 0).applyQuaternion(this.camera.quaternion);
+      this.camera.position.add(tmpV);
+      this.camera.updateMatrixWorld();
+    }
     const near = 0.01;
     const far = this.farPlane.value();
-    const zoom = this.zoomFactor.value();
+    // Zoom keeps the image aspect: only the axis that would distort is shrunk.
+    const size = panel.imageSize();
+    let zx = this.zoomFactor.value();
+    let zy = zx;
+    const panelAspect = size.width && size.height ? size.width / size.height : w / h;
+    const imgAspect = w / fx / (h / fy);
+    if (imgAspect > panelAspect) zy = (zy / imgAspect) * panelAspect;
+    else zx = (zx * imgAspect) / panelAspect;
     // Off-axis frustum from the intrinsics (rviz CameraDisplay::updateCamera).
-    const left = (-cx / fx) * near / zoom;
-    const right = ((w - cx) / fx) * near / zoom;
-    const top = (cy / fy) * near / zoom;
-    const bottom = (-(h - cy) / fy) * near / zoom;
+    const left = (-cx / fx) * near / zx;
+    const right = ((w - cx) / fx) * near / zx;
+    const top = (cy / fy) * near / zy;
+    const bottom = (-(h - cy) / fy) * near / zy;
     const coord = panel.coordinateSystem();
     this.camera.near = near;
     this.camera.far = far;
@@ -233,4 +256,5 @@ export class CameraDisplay extends RosTopicDisplayBase<DataMessage> implements E
 
 const tmpM = new THREE.Matrix4();
 const tmpQ = new THREE.Quaternion();
+const tmpV = new THREE.Vector3();
 const OPTICAL_TO_CAMERA = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);

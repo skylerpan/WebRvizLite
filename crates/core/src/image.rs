@@ -101,7 +101,7 @@ pub fn to_rgba8(
     out.resize(w * h * 4, 255);
     let enc = img.encoding.as_str();
     match enc {
-        "rgb8" | "8UC3" | "bgr8" => {
+        "rgb8" | "8UC3" | "8SC3" | "bgr8" => {
             let bgr = enc == "bgr8";
             for y in 0..h {
                 let r = row(img, y, 3).ok_or("image data shorter than width * height * step")?;
@@ -114,7 +114,7 @@ pub fn to_rgba8(
                 }
             }
         }
-        "rgba8" | "8UC4" | "bgra8" => {
+        "rgba8" | "8UC4" | "8SC4" | "bgra8" => {
             let bgr = enc == "bgra8";
             for y in 0..h {
                 let r = row(img, y, 4).ok_or("image data shorter than width * height * step")?;
@@ -127,7 +127,8 @@ pub fn to_rgba8(
                 }
             }
         }
-        "mono8" | "8UC1" => {
+        // bayer_* is shown raw as grey, like rviz.
+        e if e == "mono8" || e == "8UC1" || e == "8SC1" || e.starts_with("bayer") => {
             for y in 0..h {
                 let r = row(img, y, 1).ok_or("image data shorter than width * height * step")?;
                 let o = &mut out[y * w * 4..(y + 1) * w * 4];
@@ -138,10 +139,11 @@ pub fn to_rgba8(
                 }
             }
         }
-        "mono16" | "16UC1" | "32FC1" => {
+        // 16SC1 is read as unsigned, as rviz does.
+        "mono16" | "16UC1" | "16SC1" | "32FC1" => {
             let is_f32 = enc == "32FC1";
             let bpp = if is_f32 { 4 } else { 2 };
-            // Pass 1: bounds over finite, non-zero values (rviz skips 0 / NaN depth).
+            // Pass 1: bounds over finite values (rviz compares with std::min/max, so only NaN drops out).
             let mut fmin = f32::INFINITY;
             let mut fmax = f32::NEG_INFINITY;
             if opts.normalize {
@@ -154,7 +156,7 @@ pub fn to_rgba8(
                         } else {
                             read_u16(&r[x * 2..], img.is_bigendian) as f32
                         };
-                        if v.is_finite() && v != 0.0 {
+                        if v.is_finite() {
                             fmin = fmin.min(v);
                             fmax = fmax.max(v);
                         }
@@ -163,14 +165,20 @@ pub fn to_rgba8(
             }
             let (lo, hi) = if opts.normalize {
                 if fmin.is_finite() && fmax.is_finite() {
-                    state.bounds(fmin, fmax, opts.median_window)
+                    if opts.median_window > 1 {
+                        state.bounds(fmin, fmax, opts.median_window)
+                    } else {
+                        (fmin, fmax)
+                    }
                 } else {
-                    (0.0, 1.0)
+                    (f32::NAN, f32::NAN)
                 }
             } else {
                 (opts.min, opts.max)
             };
-            let span = if hi > lo { hi - lo } else { 1.0 };
+            // rviz: a non-positive or non-finite range gives a black frame.
+            let span = hi - lo;
+            let valid = span.is_finite() && span > 0.0;
             for y in 0..h {
                 let r = row(img, y, bpp).ok_or("image data shorter than width * height * step")?;
                 let o = &mut out[y * w * 4..(y + 1) * w * 4];
@@ -180,7 +188,7 @@ pub fn to_rgba8(
                     } else {
                         read_u16(&r[x * 2..], img.is_bigendian) as f32
                     };
-                    let g = if v.is_finite() && v != 0.0 {
+                    let g = if valid && v.is_finite() {
                         (((v - lo) / span).clamp(0.0, 1.0) * 255.0) as u8
                     } else {
                         0
@@ -191,15 +199,62 @@ pub fn to_rgba8(
                 }
             }
         }
+        "yuyv" | "uyvy" => {
+            let swap = enc == "uyvy"; // uyvy: U Y0 V Y1; yuyv: Y0 U Y1 V
+            for y in 0..h {
+                let r = row(img, y, 2).ok_or("image data shorter than width * height * step")?;
+                let o = &mut out[y * w * 4..(y + 1) * w * 4];
+                for x in (0..w).step_by(2) {
+                    let b = &r[x * 2..];
+                    let (y0, u, y1, v) = if swap {
+                        (b[1], b[0], b.get(3).copied().unwrap_or(b[1]), b[2])
+                    } else {
+                        (b[0], b[1], b.get(2).copied().unwrap_or(b[0]), b[3])
+                    };
+                    yuv_to_rgb(y0, u, v, &mut o[x * 4..x * 4 + 3]);
+                    if x + 1 < w {
+                        yuv_to_rgb(y1, u, v, &mut o[(x + 1) * 4..(x + 1) * 4 + 3]);
+                    }
+                }
+            }
+        }
+        "nv12" => {
+            // Y plane (h rows, step bytes) followed by interleaved UV at half resolution.
+            let y_size = img.step as usize * h;
+            let uv = img
+                .data
+                .get(y_size..)
+                .ok_or("nv12 image shorter than its Y plane")?;
+            for y in 0..h {
+                let r = row(img, y, 1).ok_or("image data shorter than width * height * step")?;
+                let uv_row = &uv[(y / 2) * img.step as usize..];
+                let o = &mut out[y * w * 4..(y + 1) * w * 4];
+                for x in 0..w {
+                    let (u, v) = (
+                        uv_row.get((x / 2) * 2).copied().unwrap_or(128),
+                        uv_row.get((x / 2) * 2 + 1).copied().unwrap_or(128),
+                    );
+                    yuv_to_rgb(r[x], u, v, &mut o[x * 4..x * 4 + 3]);
+                }
+            }
+        }
         other => return Err(format_unsupported(other)),
     }
     Ok(())
 }
 
+/// BT.601 full-range YUV → RGB, as rviz's conversions.
+fn yuv_to_rgb(y: u8, u: u8, v: u8, out: &mut [u8]) {
+    let (yf, uf, vf) = (y as f32, u as f32 - 128.0, v as f32 - 128.0);
+    out[0] = (yf + 1.402 * vf).clamp(0.0, 255.0) as u8;
+    out[1] = (yf - 0.344 * uf - 0.714 * vf).clamp(0.0, 255.0) as u8;
+    out[2] = (yf + 1.772 * uf).clamp(0.0, 255.0) as u8;
+}
+
 fn format_unsupported(enc: &str) -> String {
     let mut s = String::from("unsupported image encoding [");
     s.push_str(enc);
-    s.push_str("]; supported: rgb8 rgba8 bgr8 bgra8 mono8 mono16 8UC1 8UC3 8UC4 16UC1 32FC1");
+    s.push_str("]; supported: rgb8 rgba8 bgr8 bgra8 mono8 mono16 8UC1 8UC3 8UC4 8SC1 8SC3 8SC4 16UC1 16SC1 32FC1 bayer_* yuyv uyvy nv12");
     s
 }
 
@@ -295,10 +350,11 @@ mod tests {
             median_window: 3,
         };
         to_rgba8(&img(4, 1, "16UC1", 2, &d), &opts, &mut st, &mut out).unwrap();
-        assert_eq!(out[0], 0); // invalid → black
-        assert_eq!(out[4], 0); // min → 0
-        assert_eq!(out[12], 255); // max → 255
-        assert!(out[8] > 120 && out[8] < 135);
+        // rviz does not skip zeros: 0 is the frame minimum → black, 3000 → white, 1000 → 85
+        assert_eq!(out[0], 0);
+        assert!((out[4] as i32 - 85).abs() <= 1);
+        assert_eq!(out[12], 255);
+        assert!((out[8] as i32 - 170).abs() <= 1);
         // fixed range
         let fixed = DepthOptions {
             normalize: false,
@@ -317,6 +373,28 @@ mod tests {
         to_rgba8(&img(4, 1, "16UC1", 2, &spike), &opts, &mut st, &mut out).unwrap();
         // history: maxs [3000, 3000, 60000] → median 3000, so 3000 still maps to 255
         assert_eq!(out[12], 255);
+        // median window 1 uses the frame's own bounds
+        let one = DepthOptions {
+            normalize: true,
+            min: 0.0,
+            max: 1.0,
+            median_window: 1,
+        };
+        to_rgba8(&img(4, 1, "16UC1", 2, &spike), &one, &mut st, &mut out).unwrap();
+        assert_eq!(out[4], 255);
+        // yuyv: two grey pixels (Y=128, U=V=128) → mid grey
+        let yuyv = [128u8, 128, 128, 128];
+        to_rgba8(&img(2, 1, "yuyv", 2, &yuyv), &one, &mut st, &mut out).unwrap();
+        assert_eq!(&out[..3], &[128, 128, 128]);
+        // bayer shows raw grey
+        to_rgba8(
+            &img(2, 1, "bayer_rggb8", 1, &[10u8, 200]),
+            &one,
+            &mut st,
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!(out[4], 200);
         // 32FC1 with NaN
         let mut f = Vec::new();
         for v in [f32::NAN, 0.5, 1.0, 1.5] {

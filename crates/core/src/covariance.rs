@@ -11,10 +11,14 @@ use crate::math::quat_normalize;
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 #[cfg(not(feature = "std"))]
-use libm::{atan2, sqrt};
+use libm::{atan2, sqrt, tan};
 #[cfg(feature = "std")]
 fn sqrt(x: f64) -> f64 {
     x.sqrt()
+}
+#[cfg(feature = "std")]
+fn tan(x: f64) -> f64 {
+    x.tan()
 }
 #[cfg(feature = "std")]
 fn atan2(y: f64, x: f64) -> f64 {
@@ -184,9 +188,21 @@ pub fn is_2d(cov: &[f64; 36]) -> bool {
     cov[14] <= 0.0 && cov[21] <= 0.0 && cov[28] <= 0.0
 }
 
+/// rviz caps the angular uncertainty drawn at 89° (`kMaxDegrees`).
+pub const MAX_ANGLE: f64 = 89.0 * core::f64::consts::PI / 180.0;
+
+/// rviz `radianScaleToMetricScaleBounded`: a rotation uncertainty of `x` rad
+/// at unit distance is drawn with half extent `tan(min(x, 89°))`.
+pub fn radians_to_metric(x: f64) -> f64 {
+    tan(x.min(MAX_ANGLE))
+}
+
 /// One orientation disc: perpendicular to `axis` (0 = x, 1 = y, 2 = z), at
-/// `offset` along it, with in-plane half axes and the in-plane angle of the
-/// first axis (measured in the disc's plane from its first basis vector).
+/// `offset` along it. `half_axes` are in metres (already × offset and
+/// converted from radians); `angle` is the first eigenvector's angle in the
+/// disc's 2×2 block basis, which rviz maps to world directions as:
+/// x disc (pitch, yaw) → (+Z, −Y); y disc (roll, yaw) → (−Z, +X);
+/// z disc (roll, pitch) → (+X, −Y).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OrientationDisc {
     pub axis: usize,
@@ -198,7 +214,8 @@ pub struct OrientationDisc {
 pub enum OrientationVisual {
     /// 3-D: discs for roll (x), pitch (y) and yaw (z).
     Discs([OrientationDisc; 3]),
-    /// 2-D: a sector in the XY plane of half-angle `half_angle` (rad) and radius `offset`.
+    /// 2-D: a triangle (rviz cone) in the XY plane, apex at the pose, height
+    /// `offset`, half-width `offset · tan(half_angle)`; `half_angle` is capped at 89°.
     Yaw2D { half_angle: f64 },
 }
 
@@ -220,7 +237,7 @@ pub fn orientation_visual(cov: &[f64; 36], scale: f64, offset: f64) -> Option<Or
             return None;
         }
         return Some(OrientationVisual::Yaw2D {
-            half_angle: scale * sqrt(yaw_var),
+            half_angle: (scale * sqrt(yaw_var)).min(MAX_ANGLE),
         });
     }
     let mut discs = [OrientationDisc {
@@ -228,15 +245,17 @@ pub fn orientation_visual(cov: &[f64; 36], scale: f64, offset: f64) -> Option<Or
         half_axes: [0.0; 2],
         angle: 0.0,
     }; 3];
+    // rviz covariance_visual.cpp sub-blocks (0 = roll, 1 = pitch, 2 = yaw):
+    // roll disc (4,5) = (pitch, yaw); pitch disc (3,5) = (roll, yaw); yaw disc (3,4) = (roll, pitch).
+    const BLOCKS: [(usize, usize); 3] = [(1, 2), (0, 2), (0, 1)];
     for (axis, disc) in discs.iter_mut().enumerate() {
-        // The two other rotation components, in cyclic order (y,z), (z,x), (x,y).
-        let (a, b) = ((axis + 1) % 3, (axis + 2) % 3);
+        let (a, b) = BLOCKS[axis];
         let (vals, angle) = eigen_symmetric2(r(a, a), r(a, b), r(b, b));
         *disc = OrientationDisc {
             axis,
             half_axes: [
-                scale * offset * sqrt(vals[0].max(0.0)),
-                scale * offset * sqrt(vals[1].max(0.0)),
+                offset * radians_to_metric(scale * sqrt(vals[0].max(0.0))),
+                offset * radians_to_metric(scale * sqrt(vals[1].max(0.0))),
             ],
             angle,
         };
@@ -343,15 +362,49 @@ mod tests {
         assert!(!is_2d(&cov3));
         match orientation_visual(&cov3, 1.0, 2.0).unwrap() {
             OrientationVisual::Discs(d) => {
-                // x disc shows pitch (0.2) and yaw (0.3), times offset 2
+                // x disc shows pitch (σ 0.2) and yaw (σ 0.3): half axes offset · tan(σ), largest first
                 assert_eq!(d[0].axis, 0);
-                assert!(
-                    (d[0].half_axes[0] - 0.6).abs() < 1e-9
-                        && (d[0].half_axes[1] - 0.4).abs() < 1e-9
-                );
+                assert!((d[0].half_axes[0] - 2.0 * (0.3f64).tan()).abs() < 1e-9);
+                assert!((d[0].half_axes[1] - 2.0 * (0.2f64).tan()).abs() < 1e-9);
+                // y disc shows roll (0.1) and yaw (0.3); z disc roll and pitch
+                assert!((d[1].half_axes[0] - 2.0 * (0.3f64).tan()).abs() < 1e-9);
+                assert!((d[2].half_axes[0] - 2.0 * (0.2f64).tan()).abs() < 1e-9);
                 assert_eq!(orientation_to_vec(&OrientationVisual::Discs(d)).len(), 12);
             }
             _ => panic!("expected 3-D"),
+        }
+        // 89° cap: a huge variance saturates instead of blowing up
+        let mut huge = cov3;
+        huge[21] = 100.0;
+        match orientation_visual(&huge, 1.0, 1.0).unwrap() {
+            OrientationVisual::Discs(d) => {
+                assert!((d[1].half_axes[0] - MAX_ANGLE.tan()).abs() < 1e-9)
+            }
+            _ => panic!(),
+        }
+        let mut flat = cov_with(
+            [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, 0.0, 0.0]],
+            [0.0, 0.0, 100.0],
+        );
+        flat[14] = 0.0;
+        match orientation_visual(&flat, 1.0, 1.0).unwrap() {
+            OrientationVisual::Yaw2D { half_angle } => {
+                assert!((half_angle - MAX_ANGLE).abs() < 1e-12)
+            }
+            _ => panic!(),
+        }
+        // y disc basis: a (roll, yaw) block correlated at 45° gives angle π/4 in (roll, yaw)
+        let mut cov45 = cov_with(
+            [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, 0.0, 0.1]],
+            [0.02, 0.01, 0.02],
+        );
+        cov45[3 * 6 + 5] = 0.01;
+        cov45[5 * 6 + 3] = 0.01;
+        match orientation_visual(&cov45, 1.0, 1.0).unwrap() {
+            OrientationVisual::Discs(d) => {
+                assert!((d[1].angle - core::f64::consts::FRAC_PI_4).abs() < 1e-9)
+            }
+            _ => panic!(),
         }
     }
 }

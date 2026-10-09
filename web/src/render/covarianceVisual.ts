@@ -13,10 +13,18 @@ export interface CovarianceStyle {
   orientation: { enabled: boolean; frame: 'Local' | 'Fixed'; colorStyle: 'Unique' | 'RGB'; color: { r: number; g: number; b: number }; alpha: number; offset: number };
 }
 
-const SECTOR_SEGMENTS = 24;
 const AXIS_RGB = [0xff0000, 0x00ff00, 0x0000ff];
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
 const AXES = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
+/**
+ * World directions of each disc's 2×2 block basis (rviz covariance_visual.cpp):
+ * x disc (pitch, yaw) → (+Z, −Y); y disc (roll, yaw) → (−Z, +X); z disc (roll, pitch) → (+X, −Y).
+ */
+const DISC_BASIS: [THREE.Vector3, THREE.Vector3][] = [
+  [new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0)],
+  [new THREE.Vector3(0, 0, -1), new THREE.Vector3(1, 0, 0)],
+  [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, -1, 0)],
+];
 
 export class CovarianceVisual extends THREE.Group {
   private readonly ellipsoidMaterial = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false });
@@ -31,11 +39,10 @@ export class CovarianceVisual extends THREE.Group {
   constructor() {
     super();
     this.userData.noPick = true;
+    // rviz draws the 2-D yaw uncertainty as a flat cone: a triangle with its apex at the pose.
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array((SECTOR_SEGMENTS + 2) * 3), 3));
-    const index: number[] = [];
-    for (let i = 0; i < SECTOR_SEGMENTS; i++) index.push(0, i + 1, i + 2);
-    geometry.setIndex(index);
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+    geometry.setIndex([0, 1, 2]);
     this.sector = new THREE.Mesh(geometry, this.sectorMaterial);
     this.sector.frustumCulled = false;
     this.orientationNode.add(...this.discs, this.sector);
@@ -72,7 +79,8 @@ export class CovarianceVisual extends THREE.Group {
         for (const d of this.discs) d.visible = false;
         this.sector.visible = true;
         this.setSector(o[0], offset);
-        this.sectorMaterial.color.setRGB(c.r / 255, c.g / 255, c.b / 255, THREE.SRGBColorSpace);
+        if (unique) this.sectorMaterial.color.setRGB(c.r / 255, c.g / 255, c.b / 255, THREE.SRGBColorSpace);
+        else this.sectorMaterial.color.set(AXIS_RGB[2]);
         this.sectorMaterial.opacity = style.orientation.alpha;
       } else {
         this.sector.visible = false;
@@ -84,9 +92,9 @@ export class CovarianceVisual extends THREE.Group {
           const ax = AXES[axis] ?? AXES[2];
           disc.position.copy(ax).multiplyScalar(offset);
           // Cylinder axis Z → disc axis, then spin so the ellipse's first axis follows the eigenvector angle
-          // measured in the plane from the cyclic axes (a, b) = (axis+1, axis+2).
+          // measured in the disc's block basis (see DISC_BASIS).
           tmpQ.setFromUnitVectors(Z_AXIS, ax);
-          const va = AXES[(axis + 1) % 3], vb = AXES[(axis + 2) % 3];
+          const [va, vb] = DISC_BASIS[axis] ?? DISC_BASIS[2];
           tmpTarget.copy(va).multiplyScalar(Math.cos(angle)).addScaledVector(vb, Math.sin(angle));
           tmpB1.set(1, 0, 0).applyQuaternion(tmpQ);
           tmpB2.set(0, 1, 0).applyQuaternion(tmpQ);
@@ -104,14 +112,13 @@ export class CovarianceVisual extends THREE.Group {
     this.visible = showPos || showOri;
   }
 
-  /** Triangle fan in the local XY plane: half-angle `half` (rad), radius `r`. */
-  private setSector(half: number, r: number) {
+  /** Flat cone in the local XY plane: apex at the origin, height `h` (Offset), half-width `h · tan(half)`. */
+  private setSector(half: number, h: number) {
     const attr = this.sector.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const w = h * Math.tan(half);
     attr.setXYZ(0, 0, 0, 0);
-    for (let i = 0; i <= SECTOR_SEGMENTS; i++) {
-      const a = -half + (2 * half * i) / SECTOR_SEGMENTS;
-      attr.setXYZ(i + 1, r * Math.cos(a), r * Math.sin(a), 0);
-    }
+    attr.setXYZ(1, h, w, 0);
+    attr.setXYZ(2, h, -w, 0);
     attr.needsUpdate = true;
   }
 

@@ -15,15 +15,12 @@ export abstract class PoseToolBase extends ToolBase {
   private readonly cur = new THREE.Vector3();
   private angle = 0;
   private arrow: Arrow | null = null;
-  /** Set by onPoseSet so the result message survives the switch back to the default tool. */
-  private keepStatus = false;
 
   /** Called with the pose in the fixed frame once the user releases the mouse. */
   protected abstract onPoseSet(x: number, y: number, yaw: number): void;
 
   override activate() {
     this.state = 'idle';
-    this.keepStatus = false;
     const vp = this.ctx?.viewport();
     if (!vp) return;
     if (!this.arrow) {
@@ -42,7 +39,7 @@ export abstract class PoseToolBase extends ToolBase {
     this.arrow?.removeFromParent();
     const vp = this.ctx?.viewport();
     vp?.setCursor('default');
-    if (!this.keepStatus) vp?.setStatus('');
+    vp?.setStatus('');
   }
 
   /** Text for the status bar ("position/orientation" in rviz). */
@@ -68,7 +65,6 @@ export abstract class PoseToolBase extends ToolBase {
     }
     if (e.type === 'up' && e.button === 0) {
       if (this.state === 'orientation') {
-        this.keepStatus = true;
         this.onPoseSet(this.pos.x, this.pos.y, this.angle);
         this.arrow.visible = false;
         this.state = 'idle';

@@ -26,13 +26,13 @@ export class CovariancePropertyImpl extends BoolPropertyImpl {
     this.position = new BoolPropertyImpl('Position', true, this, { description: 'Whether or not to show the position part of covariances' });
     this.positionColor = new ColorPropertyImpl('Color', { r: 204, g: 51, b: 204 }, this.position, { description: 'Color to draw the position covariance ellipse.' });
     this.positionAlpha = new FloatPropertyImpl('Alpha', 0.3, this.position, { description: '0 is fully transparent, 1.0 is fully opaque.', min: 0, max: 1 });
-    this.positionScale = new FloatPropertyImpl('Scale', 1, this.position, { description: 'Scale factor to be applied to position covariance ellipse. Corresponds to the number of standard deviations to display', min: 0 });
+    this.positionScale = new FloatPropertyImpl('Scale', 1, this.position, { description: 'Scale factor to be applied to covariance ellipse. Corresponds to the number of standard deviations to display', min: 0 });
     this.orientation = new BoolPropertyImpl('Orientation', true, this, { description: 'Whether or not to show the orientation part of covariances' });
-    this.orientationFrame = new EnumPropertyImpl('Frame', 'Local', ['Local', 'Fixed'], this.orientation, { description: 'The frame used to display the orientation covariance.' });
+    this.orientationFrame = new EnumPropertyImpl('Frame', 'Local', ['Local', 'Fixed'], this.orientation, { description: 'Frame used to display the orientation covariance.' });
     this.orientationColorStyle = new EnumPropertyImpl('Color Style', 'Unique', ['Unique', 'RGB'], this.orientation, { description: 'Style to color the orientation covariance: XYZ with same unique color or following RGB order' });
     this.orientationColor = new ColorPropertyImpl('Color', { r: 255, g: 255, b: 127 }, this.orientation, { description: 'Color to draw the covariance ellipse.' });
     this.orientationAlpha = new FloatPropertyImpl('Alpha', 0.5, this.orientation, { description: '0 is fully transparent, 1.0 is fully opaque.', min: 0, max: 1 });
-    this.orientationOffset = new FloatPropertyImpl('Offset', 1, this.orientation, { description: 'For 3D poses is the distance where to position the ellipses representing orientation covariance. For 2D poses is the height of the triangle representing the variance on yaw.', min: 0 });
+    this.orientationOffset = new FloatPropertyImpl('Offset', 1, this.orientation, { description: 'For 3D poses: the distance where to position the ellipses representing orientation covariance. For 2D poses: the height of the triangle representing the variance on yaw', min: 0 });
     this.orientationScale = new FloatPropertyImpl('Scale', 1, this.orientation, { description: 'Scale factor to be applied to orientation covariance shapes. Corresponds to the number of standard deviations to display', min: 0 });
 
     this.orientationColorStyle.onChange((v) => {

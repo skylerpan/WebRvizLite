@@ -94,12 +94,12 @@ export class ViewManager {
     this.attach(next);
   }
 
-  /** Copies the current view into the saved list under `name` (rviz copyCurrentToList). */
-  saveCurrent(name: string): ViewController {
+  /** Copies the current view into the saved list (rviz copyCurrentToList: named after the view type). */
+  saveCurrent(name?: string): ViewController {
     const cur = this.current();
     const copy = this.create(cur.classId);
     copy.load(cur.save());
-    copy.setName(name);
+    copy.setName(name ?? (this.classes.get(cur.classId)?.info.name ?? cur.classId.split('/').pop() ?? 'View'));
     this.setSaved([...this.saved(), copy]);
     this.rebuildTree();
     return copy;

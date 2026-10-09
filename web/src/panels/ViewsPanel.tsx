@@ -23,10 +23,7 @@ export function ViewsPanel(_props: PanelProps) {
     if (saved && p === saved) views.setCurrentFrom(saved);
   };
 
-  const save = () => {
-    const name = window.prompt('Name for the saved view', views.current().name());
-    if (name !== null && name.trim()) views.saveCurrent(name.trim());
-  };
+  const save = () => views.saveCurrent();
   const remove = () => {
     const v = selectedSaved();
     if (v) {
@@ -37,8 +34,9 @@ export function ViewsPanel(_props: PanelProps) {
   const rename = () => {
     const v = selectedSaved();
     if (!v) return;
-    const name = window.prompt('View name', v.name());
-    if (name !== null && name.trim()) views.renameSaved(v, name.trim());
+    // rviz ViewsPanel::onRenameClicked: QInputDialog "Rename View" / "New Name?"; empty or unchanged is ignored.
+    const name = window.prompt('Rename View\nNew Name?', v.name());
+    if (name !== null && name.trim() && name.trim() !== v.name()) views.renameSaved(v, name.trim());
   };
 
   return (

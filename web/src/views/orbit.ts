@@ -130,6 +130,16 @@ export class OrbitViewController extends ViewControllerBase {
    * the camera's distance from the origin).
    */
   mimic(previous: ViewController) {
+    const ortho = previous as { scale?: unknown; x?: { value(): number }; y?: { value(): number } };
+    if (previous.classId === 'rviz_default_plugins/TopDownOrtho' && ortho.x && ortho.y) {
+      // orbit_view_controller.cpp: distance 100, focal (X, Y, 0), camera at (X, Y - 0.0001, 100).
+      const x = ortho.x.value(), y = ortho.y.value();
+      this.distance.setValue(100, 'program');
+      this.focalPoint.setValue({ x, y, z: 0 }, 'program');
+      this.pitch.setValue(Math.asin(THREE.MathUtils.clamp(100 / 100, -1, 1)), 'program');
+      this.yaw.setValue(Math.atan2(-0.0001, 0), 'program');
+      return;
+    }
     const cam = previous.camera;
     const dir = new THREE.Vector3();
     cam.getWorldDirection(dir);

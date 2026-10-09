@@ -41,7 +41,8 @@ export class FpsViewController extends ViewControllerBase {
     const pz = p.z + this.targetPosition.z;
     this.camera.position.set(px, py, pz);
     this.camera.up.set(0, 0, this.invertZ.value() ? -1 : 1);
-    this.camera.lookAt(px + Math.cos(yaw) * Math.cos(pitch), py + Math.sin(yaw) * Math.cos(pitch), pz + Math.sin(pitch));
+    // fps_view_controller.cpp: pitch is about +Y after yaw, so positive pitch tips the view down.
+    this.camera.lookAt(px + Math.cos(yaw) * Math.cos(pitch), py + Math.sin(yaw) * Math.cos(pitch), pz - Math.sin(pitch));
   }
 
   handleMouse(e: ViewportPointerEvent) {
@@ -56,7 +57,7 @@ export class FpsViewController extends ViewControllerBase {
     const middle = (e.buttons & 4) !== 0;
     if (left && !e.shift) {
       this.yaw.setValue(this.yaw.value() - e.dx * 0.005, 'user');
-      this.pitch.setValue(this.pitch.value() - e.dy * 0.005, 'user');
+      this.pitch.setValue(this.pitch.value() + e.dy * 0.005, 'user');
     } else if (middle || (left && e.shift)) {
       this.move(e.dx * 0.01, -e.dy * 0.01, 0);
     } else if (right) {
@@ -78,7 +79,7 @@ export class FpsViewController extends ViewControllerBase {
     const len = tmp.length();
     if (len < 1e-9) return;
     this.yaw.setValue(Math.atan2(tmp.y, tmp.x), source);
-    this.pitch.setValue(Math.asin(THREE.MathUtils.clamp(tmp.z / len, -1, 1)), source);
+    this.pitch.setValue(-Math.asin(THREE.MathUtils.clamp(tmp.z / len, -1, 1)), source);
   }
 
   reset() {
@@ -96,7 +97,7 @@ export class FpsViewController extends ViewControllerBase {
     this.position.setValue({ x: cam.position.x - this.targetPosition.x, y: cam.position.y - this.targetPosition.y, z: cam.position.z - this.targetPosition.z }, 'program');
     cam.getWorldDirection(tmp);
     this.yaw.setValue(Math.atan2(tmp.y, tmp.x), 'program');
-    this.pitch.setValue(Math.asin(THREE.MathUtils.clamp(tmp.z, -1, 1)), 'program');
+    this.pitch.setValue(-Math.asin(THREE.MathUtils.clamp(tmp.z, -1, 1)), 'program');
   }
 }
 

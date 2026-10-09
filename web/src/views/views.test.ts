@@ -52,7 +52,7 @@ describe('TopDownOrtho', () => {
   it('left drag rotates and Angle rotates the pan direction', () => {
     const v = make();
     v.handleMouse(ev({ buttons: 1, dx: 10 }));
-    expect(v.angle.value()).toBeCloseTo(-0.05);
+    expect(v.angle.value()).toBeCloseTo(0.05);
     v.angle.setValue(Math.PI / 2);
     v.handleMouse(ev({ buttons: 4, dy: 10 }));
     // dy pans along the rotated +Y, which at 90° is -X.
@@ -86,13 +86,16 @@ describe('FPS', () => {
     expect(dir.distanceTo(toOrigin)).toBeLessThan(1e-6);
   });
 
-  it('left drag turns, right drag moves backward, wheel moves forward', () => {
+  it('left drag turns (positive pitch looks down), right drag moves backward, wheel moves forward', () => {
     const v = make();
     const yaw = v.yaw.value();
     const pitch = v.pitch.value();
+    expect(pitch).toBeGreaterThan(0); // looking down at the origin from (5,5,10)
+    const dirBefore = v.camera.getWorldDirection(new THREE.Vector3());
     v.handleMouse(ev({ buttons: 1, dx: 10, dy: 10 }));
     expect(v.yaw.value()).toBeCloseTo(yaw - 0.05);
-    expect(v.pitch.value()).toBeCloseTo(pitch - 0.05);
+    expect(v.pitch.value()).toBeCloseTo(pitch + 0.05);
+    expect(v.camera.getWorldDirection(new THREE.Vector3()).z).toBeLessThan(dirBefore.z);
     const before = new THREE.Vector3().copy(v.camera.position);
     const dir = v.camera.getWorldDirection(new THREE.Vector3());
     v.handleMouse(ev({ type: 'wheel', wheel: 1 }));
@@ -123,6 +126,9 @@ describe('ViewManager saved views', () => {
     expect(vm.save().Saved).toBeNull();
     vm.load({ Current: { Class: 'rviz_default_plugins/Orbit', Name: 'Current View', Distance: 12 }, Saved: null });
     expect(vm.saved()).toHaveLength(0);
+    const unnamed = vm.saveCurrent();
+    expect(unnamed.name()).toBe('Orbit');
+    vm.removeSaved(unnamed);
     const top = vm.saveCurrent('Top');
     vm.setCurrentClass('rviz_default_plugins/TopDownOrtho');
     const saved2 = vm.saveCurrent('Ortho');

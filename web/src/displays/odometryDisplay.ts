@@ -70,10 +70,11 @@ export class OdometryDisplay extends MessageFilterDisplayBase<DataMessage> {
     const l = this.lastUsed;
     if (!l) return false;
     const dx = d.positions[0] - l.positions[0], dy = d.positions[1] - l.positions[1], dz = d.positions[2] - l.positions[2];
-    if (Math.sqrt(dx * dx + dy * dy + dz * dz) > this.positionTolerance.value()) return false;
+    // rviz: similar only when BOTH differences are strictly within tolerance.
+    if (!(Math.sqrt(dx * dx + dy * dy + dz * dz) < this.positionTolerance.value())) return false;
     tmpQa.set(l.orientations[0], l.orientations[1], l.orientations[2], l.orientations[3]);
     tmpQb.set(d.orientations[0], d.orientations[1], d.orientations[2], d.orientations[3]);
-    return tmpQa.angleTo(tmpQb) <= this.angleTolerance.value();
+    return tmpQa.angleTo(tmpQb) < this.angleTolerance.value();
   }
 
   processMessage(msg: DataMessage) {
@@ -88,9 +89,9 @@ export class OdometryDisplay extends MessageFilterDisplayBase<DataMessage> {
       return;
     }
     const q = d.orientations;
-    const n = Math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-    if (Math.abs(n - 1) > 0.01) {
-      this.setStatus('error', 'Topic', 'Orientation is not valid: quaternion is not normalized');
+    // odometry_display.cpp: |x²+y²+z²+w² − 1| must be < 10e-3
+    if (!(Math.abs(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3] - 1) < 0.01)) {
+      this.setStatus('error', 'Topic', "Message contained unnormalized quaternion (squares of values don't add to 1)");
       return;
     }
     this.setStatus('ok', 'Topic', `${this.history.length} poses kept`);

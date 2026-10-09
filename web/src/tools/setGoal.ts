@@ -29,6 +29,6 @@ export class SetGoalTool extends PoseToolBase {
       pose: { position: { x, y, z: 0 }, orientation: this.yawQuaternion(yaw) },
     };
     this.ctx.bridge.publish(this.topic.value(), MSG_TYPE, this.topic.qos(), msg);
-    this.ctx.viewport()?.setStatus(`Setting goal: ${x.toFixed(3)} ${y.toFixed(3)} ${yaw.toFixed(3)} [frame=${this.ctx.fixedFrame()}]`);
+    console.info(`[${this.name()}] published to ${this.topic.value()}: x=${x.toFixed(3)} y=${y.toFixed(3)} yaw=${yaw.toFixed(3)} frame=${this.ctx.fixedFrame()}`);
   }
 }

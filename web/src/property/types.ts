@@ -49,7 +49,9 @@ export interface Property<T = unknown> {
   readonly name: Accessor<string>;
   setName(name: string): void;
   /** Shown in the Displays panel help area when the row is selected. */
+  /** Help text; displays may change it (RobotModel renames its Links group per style). */
   readonly description: string;
+  setDescription(description: string): void;
 
   readonly value: Accessor<T>;
   readonly defaultValue: T;

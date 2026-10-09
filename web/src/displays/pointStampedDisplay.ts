@@ -32,7 +32,7 @@ export class PointStampedDisplay extends MessageFilterDisplayBase<DataMessage> {
     super(POINT_STAMPED_INFO.classId, POINT_STAMPED_INFO.name, POINT_STAMPED_INFO.messageTypes, POINT_STAMPED_INFO.description);
     this.decoder = 'point_stamped';
     this.color = new ColorPropertyImpl('Color', { r: 204, g: 41, b: 204 }, this, { description: 'Color of a point' });
-    this.alpha = new FloatPropertyImpl('Alpha', 1, this, { description: '0 is fully transparent, 1.0 is fully opaque.', min: 0, max: 1 });
+    this.alpha = new FloatPropertyImpl('Alpha', 1, this, { description: '0 is fully transparent, 1.0 is fully opaque.' });
     this.radius = new FloatPropertyImpl('Radius', 0.2, this, { description: 'Radius of a point', min: 0 });
     this.historyLength = new IntPropertyImpl('History Length', 1, this, { description: 'Number of prior measurements to display.', min: 1, max: 100000 });
     for (const p of [this.color, this.alpha, this.radius]) p.onChange(() => this.redraw());
@@ -56,7 +56,8 @@ export class PointStampedDisplay extends MessageFilterDisplayBase<DataMessage> {
   private redraw() {
     if (!this.spheres) return;
     const c = this.color.value();
-    const r = this.radius.value();
+    // point_stamped_display.cpp scales rviz's unit-diameter sphere by Radius, so Radius is the diameter.
+    const r = this.radius.value() / 2;
     const a = this.alpha.value() * 255;
     this.spheres.begin();
     for (let i = 0; i < this.points.length; i += 3) this.spheres.push(this.points[i], this.points[i + 1], this.points[i + 2], 0, 0, 0, 1, r, r, r, c.r, c.g, c.b, a);
@@ -90,7 +91,7 @@ export class PointStampedDisplay extends MessageFilterDisplayBase<DataMessage> {
   override selectionBounds(hit: PickHit, out: THREE.Box3): boolean {
     const i = hit.instance * 3;
     if (i + 2 >= this.points.length) return false;
-    return boxAround(out, { x: this.points[i], y: this.points[i + 1], z: this.points[i + 2] }, this.radius.value() * 2);
+    return boxAround(out, { x: this.points[i], y: this.points[i + 1], z: this.points[i + 2] }, this.radius.value());
   }
 
   override reset() {

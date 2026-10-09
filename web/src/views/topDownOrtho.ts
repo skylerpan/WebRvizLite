@@ -26,7 +26,7 @@ export class TopDownOrthoViewController extends ViewControllerBase {
 
   constructor(fixedFrame: () => string, classId = TOP_DOWN_ORTHO_INFO.classId) {
     super(classId, fixedFrame, 'orthographic');
-    this.scale = new FloatPropertyImpl('Scale', 10, this, { description: 'How much of the scene is visible (pixels per meter).', min: 0.001 });
+    this.scale = new FloatPropertyImpl('Scale', 10, this, { description: 'How much of the scene is visible (pixels per meter).' });
     this.angle = new FloatPropertyImpl('Angle', 0, this, { description: 'Angle around the Z axis to rotate.' });
     this.x = new FloatPropertyImpl('X', 0, this, { description: 'X component of camera position.' });
     this.y = new FloatPropertyImpl('Y', 0, this, { description: 'Y component of camera position.' });
@@ -67,7 +67,8 @@ export class TopDownOrthoViewController extends ViewControllerBase {
     const right = (e.buttons & 2) !== 0;
     const middle = (e.buttons & 4) !== 0;
     if (left && !e.shift) {
-      this.angle.setValue(this.angle.value() - e.dx * 0.005, 'user');
+      // fixed_orientation_ortho_view_controller.cpp: angle_property_->add(diff_x * 0.005)
+      this.angle.setValue(this.angle.value() + e.dx * 0.005, 'user');
     } else if (middle || (left && e.shift)) {
       this.move(-e.dx / this.scale.value(), e.dy / this.scale.value());
     } else if (right) {
@@ -96,7 +97,7 @@ export class TopDownOrthoViewController extends ViewControllerBase {
     this.y.setValue(point.y - this.targetPosition.y, 'user');
   }
 
-  /** rviz: copies Scale/Angle/X/Y from another TopDownOrtho, else takes the previous camera's XY. */
+  /** rviz: copies Scale/Angle/X/Y from another TopDownOrtho; else the source's focal point, else its camera XY. */
   mimic(previous: ViewController) {
     if (previous instanceof TopDownOrthoViewController) {
       this.scale.setValue(previous.scale.value(), 'program');
@@ -105,7 +106,8 @@ export class TopDownOrthoViewController extends ViewControllerBase {
       this.y.setValue(previous.y.value(), 'program');
       return;
     }
-    const p = previous.camera.position;
+    const focal = (previous as { focalPoint?: { value(): { x: number; y: number } } }).focalPoint?.value();
+    const p = focal ?? previous.camera.position;
     this.x.setValue(p.x, 'program');
     this.y.setValue(p.y, 'program');
   }

@@ -143,7 +143,7 @@ export function App() {
       </div>
       <div class="wrl-dock" ref={dockEl} />
       <div class="wrl-statusbar">
-        <Show when={toolStatus()}><span class="wrl-tool-status">{toolStatus()}</span></Show>
+        <Show when={toolStatus()}><span class="wrl-tool-status" innerHTML={toolStatus()} /></Show>
         <span>Renderer: {renderBackend()} · {measuredFps()} FPS</span>
         <Show when={new URLSearchParams(location.search).has('perf')}>
           <span title="frames whose update+render took >16 ms / worst frame" onClick={() => { resetPerfCounters(); resetPerf(); }} style={{ cursor: 'pointer' }}>

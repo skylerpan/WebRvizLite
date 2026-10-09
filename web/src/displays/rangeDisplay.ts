@@ -30,7 +30,7 @@ export class RangeDisplay extends MessageFilterDisplayBase<DataMessage> {
     super(RANGE_INFO.classId, RANGE_INFO.name, RANGE_INFO.messageTypes, RANGE_INFO.description);
     this.decoder = 'range';
     this.color = new ColorPropertyImpl('Color', { r: 255, g: 255, b: 255 }, this, { description: 'Color to draw the range.' });
-    this.alpha = new FloatPropertyImpl('Alpha', 0.5, this, { description: 'Amount of transparency to apply to the range.', min: 0, max: 1 });
+    this.alpha = new FloatPropertyImpl('Alpha', 0.5, this, { description: 'Amount of transparency to apply to the range.' });
     this.bufferLength = new IntPropertyImpl('Buffer Length', 1, this, { description: 'Number of prior measurements to display.', min: 1 });
     for (const p of [this.color, this.alpha]) p.onChange(() => this.redraw());
     this.bufferLength.onChange(() => {
@@ -55,16 +55,18 @@ export class RangeDisplay extends MessageFilterDisplayBase<DataMessage> {
     const a = this.alpha.value() * 255;
     this.cones.begin();
     for (const d of this.history) {
+      const range = displayedRange(d);
+      if (range <= 0) continue;
       // UNIT_CONE_Z: base at z=0, tip at z=1. Put the tip at the sensor and open the cone along the sensor's +X:
       // local +Z → -X, placed `range` ahead of the sensor.
       tmpQ.set(d.orientations[0], d.orientations[1], d.orientations[2], d.orientations[3]);
-      tmpPos.set(d.range, 0, 0).applyQuaternion(tmpQ);
+      tmpPos.set(range, 0, 0).applyQuaternion(tmpQ);
       tmpPos.x += d.positions[0];
       tmpPos.y += d.positions[1];
       tmpPos.z += d.positions[2];
       tmpQ.multiply(Z_TO_NEG_X);
-      const r = d.range * Math.tan(d.fieldOfView / 2);
-      this.cones.push(tmpPos.x, tmpPos.y, tmpPos.z, tmpQ.x, tmpQ.y, tmpQ.z, tmpQ.w, r, r, d.range, c.r, c.g, c.b, a);
+      const r = range * Math.tan(d.fieldOfView / 2);
+      this.cones.push(tmpPos.x, tmpPos.y, tmpPos.z, tmpQ.x, tmpQ.y, tmpQ.z, tmpQ.w, r, r, range, c.r, c.g, c.b, a);
     }
     this.cones.end();
   }
@@ -76,7 +78,7 @@ export class RangeDisplay extends MessageFilterDisplayBase<DataMessage> {
       return;
     }
     this.setStatus(msg.tfError ? 'warn' : 'ok', 'Transform', msg.tfError ?? 'Transform OK');
-    if (!Number.isFinite(d.range) || !Number.isFinite(d.fieldOfView) || ![...d.positions, ...d.orientations].every(Number.isFinite)) {
+    if (!Number.isFinite(d.fieldOfView) || ![...d.positions, ...d.orientations].every(Number.isFinite)) {
       this.setStatus('error', 'Topic', 'Message contained invalid floating point values (nans or infs)');
       return;
     }
@@ -110,6 +112,16 @@ export class RangeDisplay extends MessageFilterDisplayBase<DataMessage> {
     this.cones?.dispose();
     super.dispose();
   }
+}
+
+/**
+ * range_display.cpp: show `range` when it is within [min, max]; a fixed-distance
+ * ranger (min == max) reporting −inf shows min; anything else draws nothing.
+ */
+function displayedRange(d: RangeMsg): number {
+  if (d.minRange <= d.range && d.range <= d.maxRange) return d.range;
+  if (d.minRange === d.maxRange && d.range === -Infinity) return d.minRange;
+  return 0;
 }
 
 const tmpQ = new THREE.Quaternion();

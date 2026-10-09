@@ -31,7 +31,7 @@ export abstract class PropertyBase<T> implements Property<T> {
 
   readonly name: Accessor<string>;
   private readonly setNameSignal: (v: string) => void;
-  readonly description: string;
+  description: string;
   readonly value: Accessor<T>;
   private readonly setValueSignal: Setter<T>;
   readonly defaultValue: T;
@@ -92,6 +92,10 @@ export abstract class PropertyBase<T> implements Property<T> {
   onChange(cb: (value: T, source: ChangeSource) => void): () => void {
     this.listeners.add(cb);
     return () => this.listeners.delete(cb);
+  }
+
+  setDescription(description: string) {
+    this.description = description;
   }
 
   setHidden(hidden: boolean) {

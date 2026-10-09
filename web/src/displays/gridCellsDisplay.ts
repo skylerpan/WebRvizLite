@@ -28,7 +28,7 @@ export class GridCellsDisplay extends MessageFilterDisplayBase<DataMessage> {
     this.color = new ColorPropertyImpl('Color', { r: 25, g: 255, b: 0 }, this, { description: 'Color of the grid cells.' });
     this.alpha = new FloatPropertyImpl('Alpha', 1, this, { description: 'Amount of transparency to apply to the cells.', min: 0, max: 1 });
     this.color.onChange(() => this.recolor());
-    this.alpha.onChange(() => this.cloud?.setStyle('Flat Squares', this.cellSize, 1, this.alpha.value()));
+    this.alpha.onChange(() => this.cloud?.setStyle('Tiles', this.cellSize, 1, this.alpha.value()));
   }
 
   protected override onInitialize() {
@@ -64,7 +64,9 @@ export class GridCellsDisplay extends MessageFilterDisplayBase<DataMessage> {
       this.setStatus('error', 'Topic', 'Message contained invalid floating point values (nans or infs)');
       return;
     }
-    this.setStatus('ok', 'Topic', `${d.count} cells`);
+    if (d.cellWidth === 0 || d.cellHeight === 0) this.setStatus('error', 'Topic', "One of the Cell's dimension is zero, cells will be invisible.");
+    else if (d.count === 0) this.setStatus('warn', 'Topic', 'Message is empty: there are no cells to be shown.');
+    else this.setStatus('ok', 'Topic', `${d.count} cells`);
     const c = this.color.value();
     if (this.colors.length < d.count * 3) this.colors = new Uint8Array(Math.max(d.count * 3, this.colors.length * 2));
     for (let i = 0; i < d.count; i++) {
@@ -73,8 +75,9 @@ export class GridCellsDisplay extends MessageFilterDisplayBase<DataMessage> {
       this.colors[i * 3 + 2] = c.b;
     }
     const realloc = this.buffer.set(d.count, d.positions, this.colors);
+    // rviz draws cell_width × cell_height tiles in the XY plane; our tiles are square (max of the two).
     this.cellSize = Math.max(d.cellWidth, d.cellHeight);
-    this.cloud.setStyle('Flat Squares', this.cellSize, 1, this.alpha.value());
+    this.cloud.setStyle('Tiles', this.cellSize, 1, this.alpha.value());
     this.cloud.refresh(realloc);
     this.cloud.visible = d.count > 0;
   }

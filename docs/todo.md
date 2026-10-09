@@ -75,3 +75,24 @@ depth-1 / transient-local subscriptions so 10 Hz clouds are not re-sent.
 - **Image display:** only raw `sensor_msgs/Image` encodings
   (rgb8/rgba8/bgr8/bgra8/mono8/mono16/8UC1/8UC3/8UC4/16UC1/32FC1);
   compressed / image_transport is Tier 2.
+
+## Checked against rviz lyrical (2026-10-09)
+
+The Tier 1 details first implemented from memory were compared with the
+`lyrical` sources (`rviz_default_plugins/src/.../{odometry,pose_covariance,range,
+grid_cells,point,polygon,robot_model,robot,image,camera}`,
+`rviz_rendering/.../covariance_visual.cpp`, `rviz_common/.../properties/
+covariance_property.cpp`, the ortho/fps/orbit view controllers, the measure/
+point/pose/select/focus tools, `time_panel.cpp`, `views_panel.cpp`,
+`view_manager.cpp`) and corrected. Remaining deliberate differences:
+
+- **GridCells tiles are square.** rviz draws `cell_width × cell_height` tiles;
+  `CloudObject` has one size per cloud, so the larger of the two is used.
+- **Image YUV encodings (`yuyv`, `uyvy`, `nv12`) are converted but untested
+  against a real camera**; `bayer_*` is shown as raw grey like rviz.
+- **RobotModel `Description File`** is a plain path string (rviz uses a file
+  picker); files are fetched through `/api/mesh`, so they must live under a
+  package share directory or a `--package-path` root.
+- **Link trails (`Show Trail`)** are stored but not drawn.
+- **Camera / Image `Transport Override`** is stored but has no effect
+  (image_transport is Tier 2).

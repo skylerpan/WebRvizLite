@@ -1,5 +1,6 @@
 /** rviz_default_plugins/FocusCamera (focus_tool.cpp): click a point, the camera looks at it, back to the default tool. */
 
+import * as THREE from 'three/webgpu';
 import { ToolBase } from './Tool';
 import type { ToolClassInfo } from './types';
 import type { ViewportPointerEvent } from '../views/types';
@@ -14,6 +15,8 @@ export const FOCUS_CAMERA_INFO: ToolClassInfo = {
 export class FocusCameraTool extends ToolBase {
   private downX = 0;
   private downY = 0;
+  private lastHoverMs = 0;
+  private readonly ray = new THREE.Ray();
 
   constructor() {
     super(FOCUS_CAMERA_INFO.classId, FOCUS_CAMERA_INFO.shortcut);
@@ -22,7 +25,7 @@ export class FocusCameraTool extends ToolBase {
   override activate() {
     const vp = this.ctx?.viewport();
     vp?.setCursor('crosshair');
-    vp?.setStatus('Click on a point to focus the camera on it.');
+    vp?.setStatus('<b>Left-Click:</b> Look in this direction.');
   }
 
   override deactivate() {
@@ -40,11 +43,22 @@ export class FocusCameraTool extends ToolBase {
       this.downY = e.y;
       return;
     }
+    if (e.type === 'move' && !e.buttons) {
+      const now = performance.now();
+      if (now - this.lastHoverMs < 50) return;
+      this.lastHoverMs = now;
+      void vp.pickPoint(e.x, e.y).then((hit) => {
+        vp.setStatus(hit ? `<b>Left-Click:</b> Focus on this point. [${hit.worldPos.x.toFixed(3)},${hit.worldPos.y.toFixed(3)},${hit.worldPos.z.toFixed(3)}]` : '<b>Left-Click:</b> Look in this direction.');
+      });
+      return;
+    }
     if (e.type === 'up' && e.button === 0) {
       // Allow a small drag so the click is not mistaken for a camera move.
       if (Math.abs(e.x - this.downX) > 3 || Math.abs(e.y - this.downY) > 3) return;
       void vp.pickPoint(e.x, e.y).then((hit) => {
-        if (hit) ctx.views.current().lookAt(hit.worldPos);
+        // focus_tool.cpp: without a hit, look at the point 1 m along the mouse ray.
+        const target = hit ? hit.worldPos : vp.ray(e.x, e.y, this.ray).at(1, new THREE.Vector3());
+        ctx.views.current().lookAt(target);
         ctx.revertToDefault();
       });
       return;

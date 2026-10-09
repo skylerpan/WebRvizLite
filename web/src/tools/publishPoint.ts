@@ -4,6 +4,9 @@ import { BoolPropertyImpl, RosTopicPropertyImpl } from '../property/Property';
 import { ToolBase } from './Tool';
 import { stampFromNs, type ToolClassInfo } from './types';
 import type { ViewportPointerEvent } from '../views/types';
+import type * as THREE from 'three/webgpu';
+
+const fmt = (v: THREE.Vector3) => `${v.x.toFixed(3)},${v.y.toFixed(3)},${v.z.toFixed(3)}`;
 
 export const PUBLISH_POINT_INFO: ToolClassInfo = {
   classId: 'rviz_default_plugins/PublishPoint',
@@ -19,6 +22,7 @@ export class PublishPointTool extends ToolBase {
   readonly singleClick: BoolPropertyImpl;
   private downX = 0;
   private downY = 0;
+  private lastHoverMs = 0;
 
   constructor() {
     super(PUBLISH_POINT_INFO.classId, PUBLISH_POINT_INFO.shortcut);
@@ -29,7 +33,7 @@ export class PublishPointTool extends ToolBase {
   override activate() {
     const vp = this.ctx?.viewport();
     vp?.setCursor('crosshair');
-    vp?.setStatus('Click on a point in the scene to publish it.');
+    vp?.setStatus('Move over an object to select the target point.');
   }
 
   override deactivate() {
@@ -47,17 +51,29 @@ export class PublishPointTool extends ToolBase {
       this.downY = e.y;
       return;
     }
+    if (e.type === 'move' && !e.buttons) {
+      // point_tool.cpp: the status shows the 3D point under the cursor.
+      const now = performance.now();
+      if (now - this.lastHoverMs < 50) return;
+      this.lastHoverMs = now;
+      void vp.pickPoint(e.x, e.y).then((hit) => {
+        if (hit) {
+          vp.setStatus(`<b>Left-Click:</b> Select this point. [${fmt(hit.worldPos)}]`);
+          vp.setCursor('crosshair');
+        } else {
+          vp.setStatus('Move over an object to select the target point.');
+          vp.setCursor('default');
+        }
+      });
+      return;
+    }
     if (e.type === 'up' && e.button === 0) {
       if (Math.abs(e.x - this.downX) > 3 || Math.abs(e.y - this.downY) > 3) return;
       void vp.pickPoint(e.x, e.y).then((hit) => {
-        if (!hit) {
-          vp.setStatus('No surface under the cursor; nothing published.');
-          return;
-        }
+        if (!hit) return;
         const p = hit.worldPos;
         const msg = { header: { stamp: stampFromNs(ctx.rosTimeNs()), frame_id: ctx.fixedFrame() }, point: { x: p.x, y: p.y, z: p.z } };
         ctx.bridge.publish(this.topic.value(), MSG_TYPE, this.topic.qos(), msg);
-        vp.setStatus(`Published point: ${p.x.toFixed(3)} ${p.y.toFixed(3)} ${p.z.toFixed(3)} [frame=${ctx.fixedFrame()}]`);
         if (this.singleClick.value()) ctx.revertToDefault();
       });
       return;

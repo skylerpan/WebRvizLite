@@ -13,7 +13,8 @@ import type { DisplayClassInfo } from './types';
 import type { DataMessage } from '../worker/messages';
 import { parseUrdf, type UrdfJoint, type UrdfLink, type UrdfModel, type UrdfOrigin, type UrdfVisual } from '../render/urdf';
 import { disposeInstantiated, instantiateMesh, loadMesh, setObjectAlpha } from '../render/meshLoader';
-import { Axes, UNIT_BOX, UNIT_CYLINDER_Z, UNIT_SPHERE } from '../render/primitives';
+import { Arrow, Axes, UNIT_BOX, UNIT_CYLINDER_Z, UNIT_SPHERE } from '../render/primitives';
+import type { QosProfile } from '../worker/messages';
 import { boxAround, roQuaternion, roString, roVector, selectionGroup, setQuaternion, setVector } from './selectionInfo';
 import type { PickHit } from '../render/picking';
 
@@ -26,9 +27,21 @@ export const ROBOT_MODEL_INFO: DisplayClassInfo = {
 
 const LINK_TREE_STYLES = ['Links in Alphabetic Order', 'Joints in Alphabetic Order', 'Tree of links', 'Tree of links and joints'];
 const SHARED = [UNIT_BOX, UNIT_CYLINDER_Z, UNIT_SPHERE];
-const DEFAULT_COLOR = new THREE.Color(0.8, 0.8, 0.8);
+/** rviz robot_link.cpp: links without a material use RVIZ/ShadedRed. */
+const DEFAULT_COLOR = new THREE.Color(1, 0, 0);
 
-/** One URDF link: scene nodes + its property row. */
+/** rviz RobotJoint::updateChildVisibility: a joint row hides its child link and everything below. */
+const JOINT_AXIS_TYPES = new Set(['continuous', 'revolute', 'prismatic', 'planar']);
+const JOINT_AXIS_COLOR = new THREE.Color(0, 0.8, 0);
+
+/** Flattens a `Details: {...}` sub-map (tree styles) so a row loads in either layout. */
+function flattenDetails(saved: YamlMap | undefined): YamlMap | undefined {
+  if (!saved) return undefined;
+  const { Details, ...rest } = saved;
+  return isYamlMap(Details) ? { ...Details, ...rest } : saved;
+}
+
+/** One URDF link: scene nodes + its property row (rviz robot_link.cpp). */
 class LinkEntry {
   readonly node = new THREE.Group();
   readonly visual = new THREE.Group();
@@ -40,7 +53,9 @@ class LinkEntry {
   readonly showAxes: BoolPropertyImpl;
   readonly position: VectorPropertyImpl;
   readonly orientation: QuaternionPropertyImpl;
+  /** "Details" sub-group used by the two tree styles (rviz useDetailProperty). */
   readonly details: GroupProperty;
+  private detailsOn = false;
   hasTransform = false;
 
   constructor(readonly link: UrdfLink, saved: YamlMap | undefined, onChange: () => void) {
@@ -49,15 +64,33 @@ class LinkEntry {
     this.node.matrixAutoUpdate = false;
     this.axes.visible = false;
     this.node.add(this.visual, this.collision, this.axes);
-    this.enabled = new BoolPropertyImpl(link.name, true, null, { description: `Enable or disable rendering of link "${link.name}".` });
-    this.details = new GroupProperty('Details', this.enabled, { description: 'Link details' });
-    this.alpha = new FloatPropertyImpl('Alpha', 1, this.details, { description: 'Amount of transparency to apply to this link.', min: 0, max: 1 });
-    this.showTrail = new BoolPropertyImpl('Show Trail', false, this.details, { description: 'Enable/disable a 2 meter "ribbon" which follows this link.' });
-    this.showAxes = new BoolPropertyImpl('Show Axes', false, this.details, { description: 'Enable/disable showing the axes of this link.' });
-    this.position = new VectorPropertyImpl('Position', { x: 0, y: 0, z: 0 }, this.details, { description: 'Position of this link, in the current Fixed Frame.  (Not editable)', readOnly: true });
-    this.orientation = new QuaternionPropertyImpl('Orientation', { x: 0, y: 0, z: 0, w: 1 }, this.details, { description: 'Orientation of this link, in the current Fixed Frame.  (Not editable)', readOnly: true });
-    if (saved) this.enabled.load(saved, 'config');
+    this.enabled = new BoolPropertyImpl(link.name, true, null, { description: `Link <b>${link.name}</b>. Check/uncheck to show/hide this link in the display.` });
+    this.details = new GroupProperty('Details', null, { description: 'Link details' });
+    this.alpha = new FloatPropertyImpl('Alpha', 1, this.enabled, { description: 'Amount of transparency to apply to this link.', min: 0, max: 1 });
+    this.showTrail = new BoolPropertyImpl('Show Trail', false, this.enabled, { description: 'Enable/disable a 2 meter "ribbon" which follows this link.' });
+    this.showAxes = new BoolPropertyImpl('Show Axes', false, this.enabled, { description: 'Enable/disable showing the axes of this link.' });
+    this.position = new VectorPropertyImpl('Position', { x: 0, y: 0, z: 0 }, this.enabled, { description: 'Position of this link, in the current Fixed Frame.  (Not editable)', readOnly: true });
+    this.orientation = new QuaternionPropertyImpl('Orientation', { x: 0, y: 0, z: 0, w: 1 }, this.enabled, { description: 'Orientation of this link, in the current Fixed Frame.  (Not editable)', readOnly: true });
+    // rviz hides Alpha on links without geometry.
+    if (link.visuals.length === 0 && link.collisions.length === 0) this.alpha.setHidden(true);
+    const flat = flattenDetails(saved);
+    if (flat) this.enabled.load(flat, 'config');
     for (const p of [this.enabled, this.alpha, this.showAxes]) p.onChange(onChange);
+  }
+
+  /** Tree styles nest the rows under "Details"; list styles keep them directly under the link. */
+  useDetails(on: boolean) {
+    if (on === this.detailsOn) return;
+    this.detailsOn = on;
+    const rows = [this.alpha, this.showTrail, this.showAxes, this.position, this.orientation];
+    const from = on ? this.enabled : this.details;
+    const to = on ? this.details : this.enabled;
+    for (const r of rows) {
+      from.removeChild(r);
+      to.addChild(r);
+    }
+    if (on) this.enabled.addChild(this.details, 0);
+    else this.enabled.removeChild(this.details);
   }
 
   dispose() {
@@ -67,22 +100,81 @@ class LinkEntry {
   }
 }
 
+/** One URDF joint: its property row (rviz robot_joint.cpp) and optional axes / joint-axis arrow. */
 class JointEntry {
-  readonly row: GroupProperty;
-  constructor(readonly joint: UrdfJoint) {
-    this.row = new GroupProperty(joint.name, null, { description: `Joint "${joint.name}"` });
-    new StringPropertyImpl('Type', joint.type, this.row, { description: 'Joint type.', readOnly: true });
-    new StringPropertyImpl('Parent', joint.parent, this.row, { description: 'Parent link.', readOnly: true });
-    new StringPropertyImpl('Child', joint.child, this.row, { description: 'Child link.', readOnly: true });
-    if (joint.type === 'revolute' || joint.type === 'prismatic') {
-      new FloatPropertyImpl('Lower Limit', joint.limit?.lower ?? 0, this.row, { description: 'Lower limit of this joint.', readOnly: true });
-      new FloatPropertyImpl('Upper Limit', joint.limit?.upper ?? 0, this.row, { description: 'Upper limit of this joint.', readOnly: true });
+  readonly enabled: BoolPropertyImpl;
+  readonly details: GroupProperty;
+  readonly showAxes: BoolPropertyImpl;
+  readonly position: VectorPropertyImpl;
+  readonly orientation: QuaternionPropertyImpl;
+  readonly showJointAxis: BoolPropertyImpl | null = null;
+  readonly node = new THREE.Group();
+  readonly axes = new Axes(0.1, 0.01);
+  readonly axisArrow: Arrow | null = null;
+  readonly originMatrix = new THREE.Matrix4();
+  private readonly rows: Property[];
+  private detailsOn = false;
+
+  constructor(readonly joint: UrdfJoint, saved: YamlMap | undefined, onChange: () => void) {
+    this.enabled = new BoolPropertyImpl(joint.name, true, null, { description: `Joint <b>${joint.name}</b> with parent link <b>${joint.parent}</b> and child link <b>${joint.child}</b>.` });
+    this.details = new GroupProperty('Details', null, { description: 'Joint details' });
+    this.showAxes = new BoolPropertyImpl('Show Axes', false, this.enabled, { description: 'Enable/disable showing the axes of this joint.' });
+    this.position = new VectorPropertyImpl('Position', { x: 0, y: 0, z: 0 }, this.enabled, { description: 'Position of this joint, in the current Fixed Frame.  (Not editable)', readOnly: true });
+    this.orientation = new QuaternionPropertyImpl('Orientation', { x: 0, y: 0, z: 0, w: 1 }, this.enabled, { description: 'Orientation of this joint, in the current Fixed Frame.  (Not editable)', readOnly: true });
+    this.rows = [this.showAxes, this.position, this.orientation];
+    this.rows.push(new StringPropertyImpl('Type', joint.type, this.enabled, { description: 'Type of this joint.  (Not editable)', readOnly: true }));
+    if (joint.limit) {
+      this.rows.push(new FloatPropertyImpl('Lower Limit', joint.limit.lower, this.enabled, { description: 'Lower limit of this joint.  (Not editable)', readOnly: true }));
+      this.rows.push(new FloatPropertyImpl('Upper Limit', joint.limit.upper, this.enabled, { description: 'Upper limit of this joint.  (Not editable)', readOnly: true }));
     }
-    if (joint.type !== 'fixed') {
-      new VectorPropertyImpl('Joint Axis', { x: joint.axis[0], y: joint.axis[1], z: joint.axis[2] }, this.row, { description: 'Axis of this joint.', readOnly: true });
+    if (JOINT_AXIS_TYPES.has(joint.type)) {
+      this.showJointAxis = new BoolPropertyImpl('Show Joint Axis', false, this.enabled, { description: 'Enable/disable showing the axis of this joint.' });
+      this.rows.push(this.showJointAxis);
+      this.rows.push(new VectorPropertyImpl('Joint Axis', { x: joint.axis[0], y: joint.axis[1], z: joint.axis[2] }, this.enabled, { description: 'Axis of this joint.  (Not editable)', readOnly: true }));
+      // rviz: a green arrow along the joint axis.
+      this.axisArrow = new Arrow(JOINT_AXIS_COLOR.getHex(), 0.15, 0.05, 0.05, 0.08);
+      this.axisArrow.visible = false;
+      this.axisArrow.quaternion.setFromUnitVectors(X_AXIS, tmpV.set(joint.axis[0], joint.axis[1], joint.axis[2]).normalize());
+      this.node.add(this.axisArrow);
     }
+    this.axes.visible = false;
+    this.node.add(this.axes);
+    this.node.userData.noPick = true;
+    applyOrigin(this.node, joint.origin);
+    this.originMatrix.copy(this.node.matrix);
+    this.node.matrixAutoUpdate = false;
+    const flat = flattenDetails(saved);
+    if (flat) this.enabled.load(flat, 'config');
+    for (const p of [this.enabled, this.showAxes, this.showJointAxis]) p?.onChange(onChange);
+  }
+
+  useDetails(on: boolean) {
+    if (on === this.detailsOn) return;
+    this.detailsOn = on;
+    const from = on ? this.enabled : this.details;
+    const to = on ? this.details : this.enabled;
+    for (const r of this.rows) {
+      from.removeChild(r);
+      to.addChild(r);
+    }
+    if (on) this.enabled.addChild(this.details, 0);
+    else this.enabled.removeChild(this.details);
+  }
+
+  dispose() {
+    this.axes.dispose();
+    this.axisArrow?.dispose();
   }
 }
+
+/** rviz Robot::setLinkTreeStyle: the "Links" group is renamed and described per style. */
+const LINK_TREE_GROUP: Record<string, { name: string; description: string; tree: boolean; linkDetails: boolean; jointDetails: boolean }> = {
+  'Links in Alphabetic Order': { name: 'Links', description: 'All links in the robot in alphabetic order.  Uncheck a link to hide its geometry.', tree: false, linkDetails: true, jointDetails: false },
+  'Joints in Alphabetic Order': { name: 'Joints', description: 'All joints in the robot in alphabetic order.', tree: false, linkDetails: false, jointDetails: true },
+  'Tree of links': { name: 'Link Tree', description: 'A tree of all links in the robot.  Uncheck a link to hide its geometry.', tree: true, linkDetails: true, jointDetails: false },
+  'Tree of links and joints': { name: 'Link/Joint Tree', description: 'A tree of all joints and links in the robot.  Uncheck a link to hide its geometry.', tree: true, linkDetails: true, jointDetails: true },
+};
+const LINK_TREE_GROUP_NAMES = Object.values(LINK_TREE_GROUP).map((g) => g.name);
 
 export class RobotModelDisplay extends DisplayBase {
   readonly visualEnabled: BoolPropertyImpl;
@@ -110,8 +202,11 @@ export class RobotModelDisplay extends DisplayBase {
   private sinceUpdate = 0;
   private changingAll = false;
   private readonly massNodes = new THREE.Group();
-  /** Per-link YAML from the config, applied when the robot loads (rviz saves them under Links). */
+  /** Per-link / per-joint YAML from the config, applied when the robot loads (rviz saves them under the Links group). */
   private savedLinks: YamlMap = {};
+  /** True once a QoS row changed: the subscription then follows the rows instead of KeepLast(1)+transient local. */
+  private qosEdited = false;
+  private geometryErrors: string[] = [];
   private lastUrdf = '';
 
   constructor() {
@@ -125,14 +220,15 @@ export class RobotModelDisplay extends DisplayBase {
     this.alpha = new FloatPropertyImpl('Alpha', 1, this, { description: 'Amount of transparency to apply to the links.', min: 0, max: 1 });
     this.descriptionSource = new EnumPropertyImpl('Description Source', 'Topic', ['Topic', 'File'], this, { description: 'Source to get the robot description from.' });
     this.descriptionFile = new StringPropertyImpl('Description File', '', this, { description: 'Path to the robot description.', hidden: true });
-    // rviz2: /robot_description is latched by robot_state_publisher; subscribe transient local.
-    this.descriptionTopic = new RosTopicPropertyImpl('Description Topic', '/robot_description', ROBOT_MODEL_INFO.messageTypes, this, { description: 'Topic where the robot description is published.', depth: 1, durability: 'Transient Local' });
+    // robot_model_display.cpp: the rows show the generic QoS defaults, but the subscription itself is
+    // KeepLast(1) + transient local until a QoS row is actually changed (see effectiveQos()).
+    this.descriptionTopic = new RosTopicPropertyImpl('Description Topic', '', ROBOT_MODEL_INFO.messageTypes, this, { description: 'Topic where filepath to urdf is published.' });
     this.tfPrefix = new StringPropertyImpl('TF Prefix', '', this, { description: "Robot Model normally assumes the link name is the same as the tf frame name.  This option allows you to set a prefix.  Mainly useful for multi-robot situations." });
-    this.links = new GroupProperty('Links', this, { description: 'All links of the robot.' });
+    this.links = new GroupProperty('Links', this, { description: LINK_TREE_GROUP[LINK_TREE_STYLES[0]].description });
     this.linkTreeStyle = new EnumPropertyImpl('Link Tree Style', LINK_TREE_STYLES[0], LINK_TREE_STYLES, this.links, { description: 'How the list of links is displayed' });
-    this.expandTree = new BoolPropertyImpl('Expand Tree', false, this.links, { description: 'Expand or collapse link tree' });
-    this.expandLinkDetails = new BoolPropertyImpl('Expand Link Details', false, this.links, { description: 'Expand or collapse link details' });
-    this.expandJointDetails = new BoolPropertyImpl('Expand Joint Details', false, this.links, { description: 'Expand or collapse joint details' });
+    this.expandTree = new BoolPropertyImpl('Expand Tree', false, this.links, { description: 'Expand or collapse link tree', hidden: true });
+    this.expandLinkDetails = new BoolPropertyImpl('Expand Link Details', false, this.links, { description: 'Expand link details (sub properties) to see all info for all links.' });
+    this.expandJointDetails = new BoolPropertyImpl('Expand Joint Details', false, this.links, { description: 'Expand joint details (sub properties) to see all info for all joints.', hidden: true });
     this.allLinksEnabled = new BoolPropertyImpl('All Links Enabled', true, this.links, { description: 'Turn all links on or off.' });
 
     this.descriptionSource.onChange((v) => {
@@ -141,14 +237,23 @@ export class RobotModelDisplay extends DisplayBase {
       this.resubscribe();
     });
     this.descriptionTopic.onChange(() => this.resubscribe());
-    for (const c of this.descriptionTopic.children()) c.onChange(() => this.resubscribe());
+    for (const c of this.descriptionTopic.children()) {
+      c.onChange(() => {
+        this.qosEdited = true;
+        this.resubscribe();
+      });
+    }
     this.descriptionFile.onChange(() => this.resubscribe());
     this.visualEnabled.onChange(() => this.applyVisibility());
     this.collisionEnabled.onChange(() => this.applyVisibility());
     this.alpha.onChange(() => this.applyAlpha());
     this.showMass.onChange(() => this.rebuildMass());
     this.showInertia.onChange(() => this.rebuildMass());
-    this.linkTreeStyle.onChange(() => this.rebuildTree());
+    this.linkTreeStyle.onChange(() => {
+      // rviz: every style change collapses the three Expand toggles.
+      for (const p of [this.expandTree, this.expandLinkDetails, this.expandJointDetails]) p.setValue(false, 'program');
+      this.rebuildTree();
+    });
     this.allLinksEnabled.onChange((on) => {
       if (this.changingAll) return;
       this.changingAll = true;
@@ -184,7 +289,7 @@ export class RobotModelDisplay extends DisplayBase {
           if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
           this.loadUrdf(await r.text());
         })
-        .catch((e) => this.setStatus('error', 'URDF', `Could not load [${file}]: ${String(e)}`));
+        .catch(() => this.setStatus('error', 'URDF', 'URDF is empty'));
       return;
     }
     const topic = this.descriptionTopic.value();
@@ -193,12 +298,18 @@ export class RobotModelDisplay extends DisplayBase {
       return;
     }
     this.subscriptionId = this.context.bridge.subscribe(
-      topic, ROBOT_MODEL_INFO.messageTypes[0], this.descriptionTopic.qos(), 'string',
+      topic, ROBOT_MODEL_INFO.messageTypes[0], this.effectiveQos(), 'string',
       (m) => this.loadUrdf(((m as DataMessage).data as { text: string }).text),
       {},
       (message) => this.setStatus('error', 'URDF', message),
     );
     this.setStatus('warn', 'URDF', `Waiting for robot description on [${topic}]`);
+  }
+
+  /** robot_model_display.cpp sets `rclcpp::QoS(KeepLast(1)).transient_local()`; editing a QoS row replaces it. */
+  private effectiveQos(): QosProfile {
+    if (this.qosEdited) return this.descriptionTopic.qos();
+    return { depth: 1, history: 'keep_last', reliability: 'reliable', durability: 'transient_local' };
   }
 
   private unsubscribe() {
@@ -210,17 +321,23 @@ export class RobotModelDisplay extends DisplayBase {
 
   private loadUrdf(text: string) {
     if (text === this.lastUrdf && this.model) return;
+    if (!text.trim()) {
+      this.setStatus('error', 'URDF', 'URDF is empty');
+      return;
+    }
     let model: UrdfModel;
     try {
       model = parseUrdf(text);
     } catch (e) {
-      this.setStatus('error', 'URDF', `URDF failed to parse: ${String(e)}`);
+      console.warn('[RobotModel] URDF parse error:', e);
+      this.setStatus('error', 'URDF', 'URDF failed Model parse');
       return;
     }
     this.lastUrdf = text;
     this.model = model;
+    this.geometryErrors = [];
     this.rebuildLinks();
-    this.setStatus('ok', 'URDF', `Robot "${model.name}": ${model.links.size} links, ${model.joints.size} joints`);
+    this.setStatus('ok', 'URDF', 'URDF parsed OK');
   }
 
   private clearLinks() {
@@ -230,6 +347,11 @@ export class RobotModelDisplay extends DisplayBase {
       e.dispose();
     }
     this.entries.clear();
+    for (const j of this.jointRows) {
+      j.node.removeFromParent();
+      j.dispose();
+    }
+    this.jointRows = [];
     for (const c of this.links.children().slice()) {
       if (c !== this.linkTreeStyle && c !== this.expandTree && c !== this.expandLinkDetails && c !== this.expandJointDetails && c !== this.allLinksEnabled) this.links.removeChild(c);
     }
@@ -248,20 +370,35 @@ export class RobotModelDisplay extends DisplayBase {
       });
       e.alpha.onChange(() => this.applyAlpha());
       e.node.visible = false;
-      this.buildGeometry(e.visual, link.visuals, false);
-      this.buildGeometry(e.collision, link.collisions, true);
+      this.buildGeometry(e.visual, link.visuals, link.name);
+      // rviz draws collision geometry with the same materials as the visuals.
+      this.buildGeometry(e.collision, link.collisions, link.name);
       this.sceneNode.add(e.node);
       this.makePickable(e.node);
       this.entries.set(link.name, e);
     }
-    this.jointRows = [...model.joints.values()].map((j) => new JointEntry(j));
+    this.jointRows = [...model.joints.values()].map((j) => {
+      const saved = isYamlMap(this.savedLinks[j.name]) ? (this.savedLinks[j.name] as YamlMap) : undefined;
+      const je = new JointEntry(j, saved, () => this.applyVisibility());
+      je.enabled.onChange((on) => this.setSubtreeEnabled(j.child, on));
+      this.sceneNode.add(je.node);
+      return je;
+    });
     this.rebuildTree();
     this.rebuildMass();
     this.applyVisibility();
     this.applyAlpha();
   }
 
-  private buildGeometry(group: THREE.Group, visuals: UrdfVisual[], wireframe: boolean) {
+  /** rviz RobotJoint::updateChildVisibility: unchecking a joint hides its child link and everything below. */
+  private setSubtreeEnabled(link: string, on: boolean) {
+    const e = this.entries.get(link);
+    if (!e) return;
+    e.enabled.setValue(on, 'program');
+    for (const j of this.jointRows) if (j.joint.parent === link) this.setSubtreeEnabled(j.joint.child, on);
+  }
+
+  private buildGeometry(group: THREE.Group, visuals: UrdfVisual[], linkName: string) {
     for (const v of visuals) {
       const holder = new THREE.Group();
       applyOrigin(holder, v.origin);
@@ -272,13 +409,17 @@ export class RobotModelDisplay extends DisplayBase {
         holder.userData.baseAlpha = baseAlpha;
         loadMesh(g.filename)
           .then((proto) => {
-            const inst = instantiateMesh(proto, { color: wireframe ? new THREE.Color(0.3, 0.9, 0.3) : color, alpha: baseAlpha, scale: g.scale, wireframe, useEmbeddedMaterials: !wireframe });
+            const inst = instantiateMesh(proto, { color, alpha: baseAlpha, scale: g.scale, useEmbeddedMaterials: true });
             holder.add(inst);
             this.applyAlpha();
           })
-          .catch((e) => this.setStatus('error', `Mesh ${g.filename}`, `Could not load mesh: ${String(e)}`));
+          .catch((e) => {
+            // robot_model_display.cpp collects these under the URDF status.
+            this.geometryErrors.push(`• for link '${linkName}':\n${String(e)}`);
+            this.setStatus('error', 'URDF', `Errors loading geometries:\n${this.geometryErrors.join('\n')}`);
+          });
       } else {
-        const material = new THREE.MeshBasicMaterial({ color: wireframe ? 0x4de64d : (color ?? DEFAULT_COLOR), wireframe, transparent: baseAlpha < 1, opacity: baseAlpha });
+        const material = new THREE.MeshBasicMaterial({ color: color ?? DEFAULT_COLOR, transparent: baseAlpha < 1, opacity: baseAlpha });
         let mesh: THREE.Mesh;
         if (g.type === 'box') {
           mesh = new THREE.Mesh(UNIT_BOX, material);
@@ -314,7 +455,7 @@ export class RobotModelDisplay extends DisplayBase {
       holder.userData.noPick = true;
       if (this.showMass.value()) {
         const r = Math.cbrt(inertial.mass) * 0.03;
-        const sphere = new THREE.Mesh(UNIT_SPHERE, new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.6 }));
+        const sphere = new THREE.Mesh(UNIT_SPHERE, new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.6 }));
         sphere.scale.setScalar(r);
         sphere.userData.sharedGeometry = true;
         holder.add(sphere);
@@ -336,17 +477,25 @@ export class RobotModelDisplay extends DisplayBase {
     }
   }
 
-  /** Rows under "Links" for the chosen Link Tree Style. */
+  /** Rows under the Links group for the chosen Link Tree Style (rviz Robot::setLinkTreeStyle). */
   private rebuildTree() {
     for (const c of this.links.children().slice()) {
       if (c !== this.linkTreeStyle && c !== this.expandTree && c !== this.expandLinkDetails && c !== this.expandJointDetails && c !== this.allLinksEnabled) this.links.removeChild(c);
     }
-    for (const e of this.entries.values()) for (const c of e.enabled.children().slice()) if (c !== e.details) e.enabled.removeChild(c);
-    for (const j of this.jointRows) for (const c of j.row.children().slice()) if (c.kind !== 'string' && c.kind !== 'float' && c.kind !== 'vector') j.row.removeChild(c);
-    const model = this.model;
-    if (!model) return;
+    for (const e of this.entries.values()) for (const c of e.enabled.children().slice()) if (c !== e.details && !(e.details.children() as Property[]).includes(c) && (c as Property).kind === 'bool' && c !== e.alpha && c !== e.showTrail && c !== e.showAxes) e.enabled.removeChild(c);
+    for (const j of this.jointRows) for (const c of j.enabled.children().slice()) if (c !== j.details && (c as Property).kind === 'bool' && c !== j.showAxes && c !== j.showJointAxis) j.enabled.removeChild(c);
     // Configs saved before the robot loaded carry `Link Tree Style: ""`; keep it for round-trip, draw as the default.
     const style = LINK_TREE_STYLES.includes(this.linkTreeStyle.value()) ? this.linkTreeStyle.value() : LINK_TREE_STYLES[0];
+    const layout = LINK_TREE_GROUP[style];
+    this.links.setName(layout.name);
+    this.links.setDescription(layout.description);
+    this.expandTree.setHidden(!layout.tree);
+    this.expandLinkDetails.setHidden(!layout.linkDetails);
+    this.expandJointDetails.setHidden(!layout.jointDetails);
+    for (const e of this.entries.values()) e.useDetails(layout.tree);
+    for (const j of this.jointRows) j.useDetails(layout.tree);
+    const model = this.model;
+    if (!model) return;
     const sorted = [...this.entries.values()].sort((a, b) => a.link.name.localeCompare(b.link.name));
     const childJoints = (link: string) => this.jointRows.filter((j) => j.joint.parent === link).sort((a, b) => a.joint.name.localeCompare(b.joint.name));
     const addLinkTree = (e: LinkEntry, parent: Property, withJoints: boolean) => {
@@ -354,8 +503,8 @@ export class RobotModelDisplay extends DisplayBase {
       for (const j of childJoints(e.link.name)) {
         const childEntry = this.entries.get(j.joint.child);
         if (withJoints) {
-          e.enabled.addChild(j.row);
-          if (childEntry) addLinkTree(childEntry, j.row, true);
+          e.enabled.addChild(j.enabled);
+          if (childEntry) addLinkTree(childEntry, j.enabled, true);
         } else if (childEntry) {
           addLinkTree(childEntry, e.enabled, false);
         }
@@ -363,7 +512,7 @@ export class RobotModelDisplay extends DisplayBase {
     };
     switch (style) {
       case 'Joints in Alphabetic Order':
-        for (const j of [...this.jointRows].sort((a, b) => a.joint.name.localeCompare(b.joint.name))) this.links.addChild(j.row);
+        for (const j of [...this.jointRows].sort((a, b) => a.joint.name.localeCompare(b.joint.name))) this.links.addChild(j.enabled);
         break;
       case 'Tree of links':
       case 'Tree of links and joints':
@@ -428,6 +577,20 @@ export class RobotModelDisplay extends DisplayBase {
         missing++;
       }
     }
+    for (const j of this.jointRows) {
+      const parent = this.entries.get(j.joint.parent);
+      const show = !!parent?.hasTransform && parent.enabled.value();
+      j.node.visible = show;
+      if (!show) continue;
+      // Joint pose = parent link pose × joint origin (rviz RobotJoint::getPosition).
+      j.node.matrix.copy(parent.node.matrix).multiply(j.originMatrix);
+      j.node.matrixWorldNeedsUpdate = true;
+      j.node.matrix.decompose(tmpPos, tmpQuat, tmpScale);
+      j.position.setValue({ x: tmpPos.x, y: tmpPos.y, z: tmpPos.z });
+      j.orientation.setValue({ x: tmpQuat.x, y: tmpQuat.y, z: tmpQuat.z, w: tmpQuat.w });
+      j.axes.visible = j.showAxes.value();
+      if (j.axisArrow) j.axisArrow.visible = j.showJointAxis?.value() ?? false;
+    }
     if (missing === 0) this.setStatus('ok', 'Transform', `All ${shown} links transformed`);
     else this.setStatus(shown === 0 ? 'error' : 'warn', 'Transform', `${missing} link(s) without a transform to [${this.context.fixedFrame()}]`);
   }
@@ -470,11 +633,17 @@ export class RobotModelDisplay extends DisplayBase {
   }
 
   override load(yaml: YamlValue, source: ChangeSource = 'config') {
-    if (isYamlMap(yaml) && isYamlMap(yaml.Links)) {
-      this.savedLinks = {};
-      for (const [k, v] of Object.entries(yaml.Links)) if (isYamlMap(v) && !['Link Tree Style', 'Expand Tree', 'Expand Link Details', 'Expand Joint Details', 'All Links Enabled'].includes(k)) this.savedLinks[k] = v;
+    if (isYamlMap(yaml)) {
+      // rviz saves the group under its current name: Links / Joints / Link Tree / Link/Joint Tree.
+      const key = LINK_TREE_GROUP_NAMES.find((n) => isYamlMap(yaml[n]));
+      if (key) {
+        this.links.setName(key);
+        this.savedLinks = {};
+        for (const [k, v] of Object.entries(yaml[key] as YamlMap)) if (isYamlMap(v) && !['Link Tree Style', 'Expand Tree', 'Expand Link Details', 'Expand Joint Details', 'All Links Enabled'].includes(k)) this.savedLinks[k] = v;
+      }
     }
     super.load(yaml, source);
+    this.rebuildTree();
   }
 
   override dispose() {
@@ -492,3 +661,6 @@ function applyOrigin(obj: THREE.Object3D, origin: UrdfOrigin) {
 
 const tmpPos = new THREE.Vector3();
 const tmpQuat = new THREE.Quaternion();
+const tmpScale = new THREE.Vector3();
+const tmpV = new THREE.Vector3();
+const X_AXIS = new THREE.Vector3(1, 0, 0);
