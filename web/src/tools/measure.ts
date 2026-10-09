@@ -3,7 +3,7 @@
 import * as THREE from 'three/webgpu';
 import { ToolBase } from './Tool';
 import { ColorPropertyImpl } from '../property/Property';
-import type { ToolClassInfo } from './types';
+import { HOVER_INTERVAL_MS, type ToolClassInfo } from './types';
 import type { ViewportPointerEvent } from '../views/types';
 
 export const MEASURE_INFO: ToolClassInfo = {
@@ -24,6 +24,7 @@ export class MeasureTool extends ToolBase {
   private downX = 0;
   private downY = 0;
   private lastHoverMs = 0;
+  private hoverSeq = 0;
 
   constructor() {
     super(MEASURE_INFO.classId, MEASURE_INFO.shortcut);
@@ -98,9 +99,11 @@ export class MeasureTool extends ToolBase {
     if (e.type === 'move' && !e.buttons && this.lineStarted) {
       // Live preview while choosing the second point (throttled picks).
       const now = performance.now();
-      if (now - this.lastHoverMs < 50) return;
+      if (now - this.lastHoverMs < HOVER_INTERVAL_MS || vp.pickBusy()) return;
       this.lastHoverMs = now;
+      const seq = ++this.hoverSeq;
       void vp.pickPoint(e.x, e.y).then((hit) => {
+        if (seq !== this.hoverSeq) return;
         if (hit && this.lineStarted) {
           this.setLine(hit.worldPos);
           vp.setStatus(this.status());

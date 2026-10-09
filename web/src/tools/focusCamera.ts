@@ -2,7 +2,7 @@
 
 import * as THREE from 'three/webgpu';
 import { ToolBase } from './Tool';
-import type { ToolClassInfo } from './types';
+import { HOVER_INTERVAL_MS, type ToolClassInfo } from './types';
 import type { ViewportPointerEvent } from '../views/types';
 
 export const FOCUS_CAMERA_INFO: ToolClassInfo = {
@@ -16,6 +16,7 @@ export class FocusCameraTool extends ToolBase {
   private downX = 0;
   private downY = 0;
   private lastHoverMs = 0;
+  private hoverSeq = 0;
   private readonly ray = new THREE.Ray();
 
   constructor() {
@@ -45,9 +46,11 @@ export class FocusCameraTool extends ToolBase {
     }
     if (e.type === 'move' && !e.buttons) {
       const now = performance.now();
-      if (now - this.lastHoverMs < 50) return;
+      if (now - this.lastHoverMs < HOVER_INTERVAL_MS || vp.pickBusy()) return;
       this.lastHoverMs = now;
+      const seq = ++this.hoverSeq;
       void vp.pickPoint(e.x, e.y).then((hit) => {
+        if (seq !== this.hoverSeq) return;
         vp.setStatus(hit ? `<b>Left-Click:</b> Focus on this point. [${hit.worldPos.x.toFixed(3)},${hit.worldPos.y.toFixed(3)},${hit.worldPos.z.toFixed(3)}]` : '<b>Left-Click:</b> Look in this direction.');
       });
       return;

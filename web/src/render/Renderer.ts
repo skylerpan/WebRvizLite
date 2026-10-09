@@ -28,6 +28,9 @@ export function resetPerfCounters() {
  * goes to the ToolManager. WebGPU by default, automatic WebGL2 fallback (or
  * `?webgl` to force it).
  */
+/** Frame at which the second pick warm-up runs (the scene has its first messages by then). */
+const PICK_WARMUP_FRAME = 90;
+
 export class Viewport implements ViewportServices {
   readonly renderer: THREE.WebGPURenderer;
   readonly scene: THREE.Scene;
@@ -42,6 +45,7 @@ export class Viewport implements ViewportServices {
   private readonly resizeObserver: ResizeObserver;
   private readonly input: ViewportInput;
   private disposed = false;
+  private framesRendered = 0;
   private lastFrameMs = 0;
   private targetFps = 30;
   private fpsCount = 0;
@@ -130,6 +134,10 @@ export class Viewport implements ViewportServices {
     measure('update', () => manager.update(dt));
     measure('render', () => this.renderer.render(this.scene, manager.views.current().camera));
     for (const v of manager.extraViews) measure('camera view', () => v.render());
+    this.framesRendered++;
+    // Compile the pick-pass pipelines off the critical path: once right after the first
+    // frame and once more when the first messages have populated the scene.
+    if (this.framesRendered === 1 || this.framesRendered === PICK_WARMUP_FRAME) void this.picker.pick(this.camera(), 0, 0, 1, 1, this.width, this.height).catch(() => undefined);
     const took = performance.now() - t0;
     if (took > 16) setLongFrames(longFrames() + 1);
     if (took > worstFrameMs()) setWorstFrameMs(Math.round(took * 10) / 10);
@@ -173,6 +181,9 @@ export class Viewport implements ViewportServices {
   pickPoint(x: number, y: number): Promise<PickHit | null> {
     this.resize();
     return measureAsync('pick', () => this.picker.pickPoint(this.camera(), x, y, this.width, this.height));
+  }
+  pickBusy(): boolean {
+    return this.picker.isBusy();
   }
   setSelectBox(box: { x: number; y: number; w: number; h: number } | null) {
     const el = this.selectBox;

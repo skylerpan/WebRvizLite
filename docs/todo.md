@@ -79,6 +79,14 @@ depth-1 / transient-local subscriptions so 10 Hz clouds are not re-sent.
   duration of the camera render (three.js layers are not inherited by
   children and objects added later would miss the bit), which also makes
   displays inside Groups follow their group's Visibility row.
+- **Picking.** Pick-pass pipelines are compiled on the first pick for every
+  material in the scene; the viewport runs a 1×1 warm-up pick after the first
+  frame and again at frame 90, but a material created later (a new cloud
+  slot, a new marker material, a highlight box) still pays its compile on the
+  next pick. `prepareScene` keeps its full scene traversal: three.js layers
+  are not inherited by children, so a layer or registry scheme would have to
+  track every object added to a display later; the walk is cheap next to the
+  pick render itself.
 - **Select tool and 300k-point boxes.** A box over a dense cloud returns one hit
   per visible point; the Selection panel is virtualised, but the highlight boxes
   stop at 2,000 hits (`SelectionManager.MAX_HIGHLIGHTS`).

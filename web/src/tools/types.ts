@@ -12,6 +12,12 @@ import type { BridgeClient } from '../worker/client';
 import type { PickHit } from '../render/picking';
 import type { SelectionManager } from '../app/selection';
 
+/**
+ * Hover previews (Publish Point, Focus Camera, Measure) pick at most this often;
+ * each pick re-renders the scene, so 10 Hz keeps the main thread free.
+ */
+export const HOVER_INTERVAL_MS = 100;
+
 /** Services of the 3D view that tools use (rviz RenderPanel / ViewPicker / ViewportProjectionFinder). */
 export interface ViewportServices {
   camera(): THREE.Camera;
@@ -24,6 +30,8 @@ export interface ViewportServices {
   pick(x: number, y: number, w: number, h: number): Promise<PickHit[]>;
   /** The nearest surface point under a pixel, with its owner if the object is selectable. */
   pickPoint(x: number, y: number): Promise<PickHit | null>;
+  /** True while a pick is queued or running; hover previews skip their pick then. */
+  pickBusy(): boolean;
   setCursor(cursor: 'default' | 'crosshair' | 'move' | 'grab' | 'pointer'): void;
   /** Status bar text while the tool is active (rviz Tool::setStatus). */
   setStatus(text: string): void;

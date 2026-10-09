@@ -2,7 +2,7 @@
 
 import { BoolPropertyImpl, RosTopicPropertyImpl } from '../property/Property';
 import { ToolBase } from './Tool';
-import { stampFromNs, type ToolClassInfo } from './types';
+import { HOVER_INTERVAL_MS, type ToolClassInfo, stampFromNs } from './types';
 import type { ViewportPointerEvent } from '../views/types';
 import type * as THREE from 'three/webgpu';
 
@@ -23,6 +23,7 @@ export class PublishPointTool extends ToolBase {
   private downX = 0;
   private downY = 0;
   private lastHoverMs = 0;
+  private hoverSeq = 0;
 
   constructor() {
     super(PUBLISH_POINT_INFO.classId, PUBLISH_POINT_INFO.shortcut);
@@ -54,9 +55,11 @@ export class PublishPointTool extends ToolBase {
     if (e.type === 'move' && !e.buttons) {
       // point_tool.cpp: the status shows the 3D point under the cursor.
       const now = performance.now();
-      if (now - this.lastHoverMs < 50) return;
+      if (now - this.lastHoverMs < HOVER_INTERVAL_MS || vp.pickBusy()) return;
       this.lastHoverMs = now;
+      const seq = ++this.hoverSeq;
       void vp.pickPoint(e.x, e.y).then((hit) => {
+        if (seq !== this.hoverSeq) return;
         if (hit) {
           vp.setStatus(`<b>Left-Click:</b> Select this point. [${fmt(hit.worldPos)}]`);
           vp.setCursor('crosshair');
