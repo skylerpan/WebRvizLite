@@ -98,7 +98,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let transport: Arc<dyn Transport> = if args.mock {
-        tracing::info!("using mock transport (no ROS): /scan, /tf, /tf_static, /clock");
+        tracing::info!(
+            "using mock transport (no ROS): synthetic scene, see crates/bridge/src/mock.rs"
+        );
         webrvizlite_bridge::mock::MockTransport::new()
     } else {
         #[cfg(feature = "r2r")]

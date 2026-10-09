@@ -1,13 +1,26 @@
 //! ROS-free transport that synthesizes a small navigation scene so the whole
 //! pipeline can be exercised on a machine without ROS 2:
 //!
-//! | topic        | type                        | rate  |
-//! |--------------|-----------------------------|-------|
-//! | `/scan`      | sensor_msgs/msg/LaserScan   | 10 Hz |
-//! | `/livox/lidar` | livox_ros_driver2/msg/CustomMsg | 10 Hz |
-//! | `/tf`        | tf2_msgs/msg/TFMessage      | 30 Hz |
-//! | `/tf_static` | tf2_msgs/msg/TFMessage      | latched (transient local) |
-//! | `/clock`     | rosgraph_msgs/msg/Clock     | 50 Hz |
+//! | topic | type | rate |
+//! |---|---|---|
+//! | `/scan` | sensor_msgs/msg/LaserScan | 10 Hz |
+//! | `/livox/lidar` | livox_ros_driver2/msg/CustomMsg | 10 Hz (while subscribed) |
+//! | `/points` | sensor_msgs/msg/PointCloud2 (300k points) | 10 Hz |
+//! | `/tf` | tf2_msgs/msg/TFMessage | 30 Hz |
+//! | `/tf_static` | tf2_msgs/msg/TFMessage | latched (transient local) |
+//! | `/clock` | rosgraph_msgs/msg/Clock | 50 Hz |
+//! | `/map` | nav_msgs/msg/OccupancyGrid | latched |
+//! | `/robot_description` | std_msgs/msg/String (URDF) | latched |
+//! | `/plan`, `/goal_pose`, `/particlecloud` | nav_msgs/msg/Path, geometry_msgs/msg/PoseStamped, PoseArray | 2 Hz |
+//! | `/markers`, `/marker` | visualization_msgs/msg/MarkerArray, Marker | 1 Hz |
+//! | `/odom` | nav_msgs/msg/Odometry | 20 Hz |
+//! | `/amcl_pose` | geometry_msgs/msg/PoseWithCovarianceStamped | 1 Hz |
+//! | `/grid_cells` | nav_msgs/msg/GridCells | 1 Hz |
+//! | `/clicked_point_echo` | geometry_msgs/msg/PointStamped | 2 Hz |
+//! | `/footprint` | geometry_msgs/msg/PolygonStamped | 5 Hz |
+//! | `/range` | sensor_msgs/msg/Range | 10 Hz |
+//! | `/camera/image_raw`, `/camera/depth/image_raw` | sensor_msgs/msg/Image (rgb8 / 16UC1, 160×120) | 5 Hz (while subscribed) |
+//! | `/camera/camera_info` | sensor_msgs/msg/CameraInfo | 5 Hz |
 //!
 //! The robot drives a circle of radius 2 m inside an 8 m × 6 m room; the scan is
 //! a ray cast against the walls. `tools/mock_scene.py` publishes the same scene

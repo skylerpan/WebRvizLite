@@ -17,7 +17,7 @@ three.js (WebGPU with WebGL2 fallback) and only chases performance.
 | `crates/bridge` | ROS 2 transport trait + r2r implementation |
 | `crates/server` | axum server: WebSocket bridge + embedded frontend, one executable |
 | `web/` | Vite + SolidJS + three.js + dockview frontend |
-| `fixtures/` | Test `.rviz` files, CDR samples |
+| `fixtures/` | Test `.rviz` files and the mock robot's URDF + meshes (`robot_description/`) |
 | `docker/` | ROS 2 Humble build/dev container |
 
 ## Build

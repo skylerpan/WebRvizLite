@@ -6,11 +6,12 @@ through a real ROS 2 node (rclpy), so the r2r bridge path (DDS → subscribe_raw
 Mirrors crates/bridge/src/mock.rs: an 8 m × 6 m room with a pillar, a robot
 driving a 2 m circle, and every topic `fixtures/mock_scene.rviz` subscribes to:
 
-  /tf 30 Hz · /tf_static · /clock 20 Hz · /scan 10 Hz · /map (latched) ·
+  /tf 30 Hz · /tf_static · /clock 50 Hz · /scan 10 Hz · /map (latched) ·
   /plan, /goal_pose, /particlecloud 2 Hz · /points 10 Hz (PointCloud2) ·
   /markers, /marker 1 Hz · /livox/lidar 10 Hz (livox_ros_driver2/CustomMsg) ·
   Tier 1: /odom 20 Hz · /amcl_pose, /grid_cells 1 Hz · /clicked_point_echo 2 Hz ·
-  /footprint 5 Hz · /range 10 Hz
+  /footprint 5 Hz · /range 10 Hz · /robot_description (latched URDF) ·
+  /camera/image_raw, /camera/depth/image_raw, /camera/camera_info 5 Hz
 
 Sizes default smaller than the Rust mock because rclpy serialises in Python:
 --points 100000, --cubes 5000, --livox-points 4000.
@@ -155,7 +156,7 @@ class MockScene(Node):
         self.map_pub.publish(self.make_map(stamp))
 
         self.create_timer(1 / 30, self.publish_tf)
-        self.create_timer(1 / 20, self.publish_clock)
+        self.create_timer(1 / 50, self.publish_clock)
         self.create_timer(0.1, self.publish_fast)
         self.create_timer(0.5, self.publish_nav)
         self.create_timer(1.0, self.publish_markers)

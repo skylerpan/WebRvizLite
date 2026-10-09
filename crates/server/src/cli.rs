@@ -51,7 +51,7 @@ pub struct Args {
     #[arg(long)]
     pub no_webtransport: bool,
 
-    /// Use the built-in mock transport (synthetic /scan, /tf, /tf_static, /clock)
+    /// Use the built-in mock transport (synthetic navigation scene: scan, point clouds, tf, odom, markers, map, camera, ...)
     /// instead of ROS 2. Works without a ROS installation.
     #[arg(long)]
     pub mock: bool,
