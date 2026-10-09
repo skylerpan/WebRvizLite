@@ -27,3 +27,6 @@ __pycache__/
 /bags/
 /target-host/
 crates/wasm/target-host/
+
+# Rust (nested crate builds)
+crates/*/target/
