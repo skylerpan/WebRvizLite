@@ -42,6 +42,9 @@ Server starts but the browser cannot connect, or the UI is stale? See
 [`docs/running.md`](docs/running.md).
 Known problems that are traced but not fixed yet? See
 [`docs/todo.md`](docs/todo.md).
+How the pieces fit together (diagrams, data flow, design, trade-offs)? See
+[`docs/architecture.md`](docs/architecture.md) (English) or
+[`docs/architecture.zh-TW.md`](docs/architecture.zh-TW.md) (繁體中文).
 Performance of Tier 1 vs Tier 0? Measurements in
 [`docs/perf-tier1-vs-tier0.md`](docs/perf-tier1-vs-tier0.md), code-level analysis in
 [`docs/perf-static-analysis.md`](docs/perf-static-analysis.md).
