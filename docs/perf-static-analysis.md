@@ -247,7 +247,9 @@
 | MarkerArray 處理兩版相同 | `makePickable` 是 O(1) Map 操作（§2.8） |
 | JS heap 30 s 內不成長 | 成長點在 wasm 線性記憶體（不計入 JS heap）與 worker 的 `recent` 陣列（每小時 ~15 MB，30 s 看不出）（§2.9） |
 
-## 6. 建議修正（依收益排序，本次只列不改）
+## 6. 建議修正（依收益排序）
+
+**2026-10-09 更新：第 1 到 5 項已實作**（commit `19792d6`、`0c03b8d`、`c046722`、`0d724f5`、`dd658f3`），結果見 `docs/perf-tier1-vs-tier0.md` 第 8 節。第 5 項的「noPick 改 layer」沒有做：three.js 的 layer 不會被子物件繼承，登錄表又要追蹤之後加進 display 的每個物件，而 traverse 的成本相對於拾取 render 本身可忽略（`docs/todo.md` 有記）。其餘項目仍未做。
 
 | # | 項目 | 位置 | 預期效果 | 工作量 |
 |---|---|---|---|---|
