@@ -74,8 +74,13 @@ export class ExpandedState {
   }
 }
 
-/** Flattens visible rows depth-first, numbering duplicate names like rviz. */
-export function flattenRows(parent: Property, expanded: ExpandedState, prefix = '', depth = 0, out: Row[] = []): Row[] {
+/**
+ * Flattens visible rows depth-first, numbering duplicate names like rviz.
+ * `reuse` (previous rows by path) returns the same Row object for a row that
+ * did not change, so the keyed <For> keeps its DOM (an open editor popup or
+ * half-typed text survives a status row appearing elsewhere).
+ */
+export function flattenRows(parent: Property, expanded: ExpandedState, prefix = '', depth = 0, out: Row[] = [], reuse?: ReadonlyMap<string, Row>): Row[] {
   const counts = new Map<string, number>();
   for (const child of parent.children()) {
     const name = child.pathName();
@@ -84,8 +89,9 @@ export function flattenRows(parent: Property, expanded: ExpandedState, prefix = 
     const path = `${prefix}/${name}${n}`;
     if (child.hidden()) continue;
     const hasChildren = child.children().some((c) => !c.hidden());
-    out.push({ prop: child, depth, path, hasChildren });
-    if (hasChildren && expanded.has(child, path)) flattenRows(child, expanded, path, depth + 1, out);
+    const prev = reuse?.get(path);
+    out.push(prev && prev.prop === child && prev.depth === depth && prev.hasChildren === hasChildren ? prev : { prop: child, depth, path, hasChildren });
+    if (hasChildren && expanded.has(child, path)) flattenRows(child, expanded, path, depth + 1, out, reuse);
   }
   return out;
 }
@@ -105,9 +111,12 @@ export function PropertyTree(props: PropertyTreeProps): JSX.Element {
   const [viewportHeight, setViewportHeight] = createSignal(400);
   const [width, setWidth] = createSignal(300);
 
+  let previous = new Map<string, Row>();
   const rows = createMemo(() => {
     props.expanded.version();
-    return flattenRows(props.root, props.expanded);
+    const out = flattenRows(props.root, props.expanded, '', 0, [], previous);
+    previous = new Map(out.map((r) => [r.path, r]));
+    return out;
   });
   const first = createMemo(() => Math.max(0, Math.floor(scrollTop() / ROW_HEIGHT) - OVERSCAN));
   const last = createMemo(() => Math.min(rows().length, Math.ceil((scrollTop() + viewportHeight()) / ROW_HEIGHT) + OVERSCAN));

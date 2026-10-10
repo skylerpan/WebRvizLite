@@ -120,6 +120,17 @@ html, body, #root {
 .wrl-edit:focus { background: #1a1a1a; border-color: var(--wrl-accent); outline: none; }
 select.wrl-edit { background: #1e1e1e; }
 .wrl-edit::-webkit-outer-spin-button, .wrl-edit::-webkit-inner-spin-button { opacity: 0.4; }
+
+/* Editable combo (Topic, TF frames): text field + ▾ listing every option in a portalled popup */
+.wrl-combo { display: flex; align-items: center; width: 100%; min-width: 0; }
+.wrl-combo .wrl-edit { flex: 1; }
+.wrl-combo-btn { flex: none; width: 16px; height: 18px; padding: 0; border: 1px solid transparent; border-radius: 2px; background: transparent; color: var(--wrl-fg-dim); font: inherit; font-size: 10px; line-height: 1; cursor: pointer; }
+.wrl-combo-btn:hover { border-color: var(--wrl-border); color: var(--wrl-fg); }
+.wrl-combo-popup { position: fixed; z-index: 1500; max-height: 226px; overflow-y: auto; background: #252526; border: 1px solid var(--wrl-border); box-shadow: 0 4px 12px rgba(0,0,0,0.5); padding: 2px 0; font-size: 12px; box-sizing: border-box; }
+.wrl-combo-option { height: 22px; line-height: 22px; padding: 0 8px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wrl-combo-option-highlight { background: #264f78; }
+.wrl-combo-option-current { font-weight: bold; }
+.wrl-combo-empty { color: var(--wrl-fg-dim); cursor: default; }
 .wrl-color-edit { display: flex; align-items: center; gap: 4px; width: 100%; }
 .wrl-swatch { display: inline-block; width: 14px; height: 14px; border: 1px solid var(--wrl-border); border-radius: 2px; flex: none; cursor: pointer; position: relative; overflow: hidden; }
 .wrl-swatch input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }

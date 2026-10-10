@@ -1,7 +1,8 @@
-import { For, Show, createMemo, createUniqueId } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
 import type { JSX } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import type { Property, Rgb, StatusLevel, Xyz, Xyzw } from './types';
-import type { EnumPropertyImpl, RosTopicPropertyImpl, StatusPropertyImpl, TfFramePropertyImpl } from './Property';
+import { TfFramePropertyImpl, type EnumPropertyImpl, type RosTopicPropertyImpl, type StatusPropertyImpl } from './Property';
 import { colorToHex, parseColor, printColor } from './color';
 import { getBridge } from '../app/bridge';
 
@@ -26,15 +27,18 @@ export function ValueCell(props: { prop: Property }): JSX.Element {
       return <TextEditor value={() => p.value() as string} commit={(v) => p.setValue(v, 'user')} />;
     case 'enum':
       return <EnumEditor prop={p as EnumPropertyImpl} />;
-    case 'editable_enum':
-      return <TextEditor value={() => p.value() as string} commit={(v) => p.setValue(v, 'user')} options={() => (p as TfFramePropertyImpl).options()} />;
+    case 'editable_enum': {
+      // TF frame properties list every frame of the tf buffer; other editable enums (QoS) keep their fixed options.
+      const options = p instanceof TfFramePropertyImpl ? () => p.frameOptions() : () => (p as EnumPropertyImpl).options();
+      return <ComboEditor value={() => p.value() as string} commit={(v) => p.setValue(v, 'user')} options={options} />;
+    }
     case 'ros_topic': {
       const topic = p as RosTopicPropertyImpl;
       const bridge = getBridge();
       const options = createMemo(() =>
         bridge.topics().filter((t) => topic.messageTypes.length === 0 || t.types.some((ty) => topic.messageTypes.includes(ty))).map((t) => t.name),
       );
-      return <TextEditor value={() => topic.value()} commit={(v) => topic.setValue(v, 'user')} options={options} />;
+      return <ComboEditor value={() => topic.value()} commit={(v) => topic.setValue(v, 'user')} options={options} />;
     }
     case 'color':
       return <ColorEditor prop={p as Property<Rgb>} />;
@@ -88,22 +92,141 @@ function NumberEditor(props: { prop: Property<number>; integer: boolean }) {
   );
 }
 
-function TextEditor(props: { value: () => string; commit: (v: string) => boolean; options?: () => readonly string[] }) {
-  const listId = createUniqueId();
+function TextEditor(props: { value: () => string; commit: (v: string) => boolean }) {
   return (
-    <>
+    <input
+      class="wrl-edit"
+      type="text"
+      value={props.value()}
+      onChange={(e) => { if (!props.commit(e.currentTarget.value)) e.currentTarget.value = props.value(); }}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.currentTarget.value = props.value(); e.currentTarget.blur(); } }}
+    />
+  );
+}
+
+const COMBO_ROWS = 10;
+const COMBO_ROW_PX = 22;
+
+/**
+ * rviz's editable QComboBox: free text plus a ▾ that lists *every* option
+ * (a native datalist only shows entries matching the typed text, so with a
+ * value in the field it looked empty). The list is a fixed-position popup
+ * portalled to <body>, so the panel's overflow and dockview do not clip it.
+ */
+export function ComboEditor(props: { value: () => string; commit: (v: string) => boolean; options: () => readonly string[] }) {
+  let input!: HTMLInputElement;
+  let button!: HTMLButtonElement;
+  let popup: HTMLDivElement | undefined;
+  const [open, setOpen] = createSignal(false);
+  const [highlight, setHighlight] = createSignal(-1);
+  const [place, setPlace] = createSignal({ left: 0, top: 0, bottom: 0, width: 0, above: false });
+
+  const reposition = () => {
+    const r = input.getBoundingClientRect();
+    const maxHeight = COMBO_ROWS * COMBO_ROW_PX + 6;
+    const above = r.bottom + maxHeight > window.innerHeight && r.top > maxHeight;
+    setPlace({ left: r.left, top: r.bottom, bottom: window.innerHeight - r.top, width: Math.max(r.width + button.offsetWidth, 160), above });
+  };
+  const show = () => {
+    reposition();
+    setHighlight(props.options().indexOf(props.value()));
+    setOpen(true);
+    input.focus(); // keyboard (arrows / Enter / Escape) works after opening with the mouse too
+  };
+  const hide = () => setOpen(false);
+  const choose = (v: string) => {
+    hide();
+    props.commit(v);
+    input.value = props.value();
+  };
+
+  createEffect(() => {
+    if (!open()) return;
+    const inside = (t: EventTarget | null) => t instanceof Node && (popup?.contains(t) || input.contains(t) || button.contains(t));
+    const onPointerDown = (e: PointerEvent) => { if (!inside(e.target)) hide(); };
+    const onScroll = (e: Event) => { if (!(e.target instanceof Node && popup?.contains(e.target))) hide(); };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', hide);
+    onCleanup(() => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', hide);
+    });
+  });
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    const n = props.options().length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!open()) return show();
+      if (n) setHighlight((h) => (h + (e.key === 'ArrowDown' ? 1 : -1) + n) % n);
+    } else if (e.key === 'Enter') {
+      if (open() && highlight() >= 0 && highlight() < n) {
+        e.preventDefault();
+        choose(props.options()[highlight()]!);
+      } else input.blur();
+    } else if (e.key === 'Escape') {
+      if (open()) hide();
+      else { input.value = props.value(); input.blur(); }
+    }
+  };
+
+  return (
+    <span class="wrl-combo">
       <input
+        ref={input}
         class="wrl-edit"
         type="text"
-        list={props.options ? listId : undefined}
+        role="combobox"
+        aria-expanded={open()}
         value={props.value()}
         onChange={(e) => { if (!props.commit(e.currentTarget.value)) e.currentTarget.value = props.value(); }}
-        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.currentTarget.value = props.value(); e.currentTarget.blur(); } }}
+        onKeyDown={onKeyDown}
       />
-      <Show when={props.options}>
-        <datalist id={listId}><For each={props.options!()}>{(o) => <option value={o} />}</For></datalist>
+      <button
+        ref={button}
+        type="button"
+        class="wrl-combo-btn"
+        tabIndex={-1}
+        title="Show all options"
+        aria-label="Show all options"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => (open() ? hide() : show())}
+      >
+        ▾
+      </button>
+      <Show when={open()}>
+        <Portal>
+          <div
+            ref={popup}
+            class="wrl-combo-popup"
+            role="listbox"
+            style={place().above
+              ? { left: `${place().left}px`, bottom: `${place().bottom}px`, width: `${place().width}px` }
+              : { left: `${place().left}px`, top: `${place().top}px`, width: `${place().width}px` }}
+            onMouseDown={(e) => e.preventDefault()}
+          >
+            <Show when={props.options().length} fallback={<div class="wrl-combo-option wrl-combo-empty">(none)</div>}>
+              <For each={props.options()}>
+                {(o, i) => (
+                  <div
+                    class="wrl-combo-option"
+                    role="option"
+                    aria-selected={o === props.value()}
+                    classList={{ 'wrl-combo-option-current': o === props.value(), 'wrl-combo-option-highlight': i() === highlight() }}
+                    onMouseEnter={() => setHighlight(i())}
+                    onClick={() => choose(o)}
+                  >
+                    {o}
+                  </div>
+                )}
+              </For>
+            </Show>
+          </div>
+        </Portal>
       </Show>
-    </>
+    </span>
   );
 }
 

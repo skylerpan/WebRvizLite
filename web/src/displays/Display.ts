@@ -33,13 +33,37 @@ export abstract class DisplayBase extends BoolPropertyImpl implements Display {
     this.onChange((enabled) => {
       if (!this.initialized) return;
       this.sceneNode.visible = enabled;
-      if (enabled) this.onEnable();
-      else this.onDisable();
+      this.syncActive();
     });
   }
 
   setEnabled(enabled: boolean) {
     this.setValue(enabled, 'program');
+  }
+
+  /**
+   * rviz: a display inside a disabled Group is off (no subscription, no panel)
+   * although its own checkbox stays ticked. `active` is the state onEnable /
+   * onDisable have been told about; groups re-sync their children.
+   */
+  private active = false;
+  isActive(): boolean {
+    return this.active;
+  }
+  private parentActive(): boolean {
+    const p = this.parent;
+    return !(p instanceof DisplayBase) || p.isActive();
+  }
+  /** Called by the parent group when its own active state changed. */
+  syncActiveFromParent() {
+    this.syncActive();
+  }
+  protected syncActive() {
+    const want = this.initialized && this.enabled() && this.parentActive();
+    if (want === this.active) return;
+    this.active = want;
+    if (want) this.onEnable();
+    else this.onDisable();
   }
 
   initialize(context: DisplayContext) {
@@ -48,7 +72,7 @@ export abstract class DisplayBase extends BoolPropertyImpl implements Display {
     context.scene.add(this.sceneNode);
     this.onInitialize();
     this.sceneNode.visible = this.enabled();
-    if (this.enabled()) this.onEnable();
+    this.syncActive();
   }
 
   /** Subclasses create visuals here; `this.context` is set. */
@@ -63,11 +87,11 @@ export abstract class DisplayBase extends BoolPropertyImpl implements Display {
     this.reset();
   }
   dispose() {
-    if (this.enabled()) this.onDisable();
+    this.initialized = false;
+    this.syncActive();
     this.releaseAllPickables();
     this.sceneNode.removeFromParent();
     this.context = null;
-    this.initialized = false;
   }
 
   setStatus(level: StatusLevel, name: string, text: string) {
@@ -263,6 +287,13 @@ export class DisplayGroupImpl extends DisplayBase implements DisplayGroup {
   override initialize(context: DisplayContext) {
     super.initialize(context);
     for (const d of this.displays()) d.initialize(context);
+  }
+  /** rviz DisplayGroup: enabling / disabling the group switches its enabled children on / off. */
+  override onEnable() {
+    for (const d of this.displays()) if (d instanceof DisplayBase) d.syncActiveFromParent();
+  }
+  override onDisable() {
+    for (const d of this.displays()) if (d instanceof DisplayBase) d.syncActiveFromParent();
   }
   override update(wallDt: number, rosDt: number) {
     for (const d of this.displays()) if (d.enabled()) d.update(wallDt, rosDt);

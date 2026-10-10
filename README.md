@@ -130,6 +130,9 @@ passed to rcl.
 ![Displays panel: toggling PointCloud2 and MarkerArray, editing a PointCloud2 property, opening Add Display](docs/media/displays.gif)
 
 *Displays panel: the same tree, property names and Add Display dialog as RViz.*
+Topic and TF frame fields are editable combos like RViz's: type freely, or
+press ▾ to pick from every topic of the display's message type or every frame
+in the TF tree.
 
 ## Shortcuts
 
