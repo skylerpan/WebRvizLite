@@ -1,7 +1,8 @@
+import { createSignal } from 'solid-js';
 import { describe, expect, it } from 'vitest';
 import {
-  BoolPropertyImpl, ColorPropertyImpl, EnumPropertyImpl, FloatPropertyImpl, GroupProperty, IntPropertyImpl,
-  RosTopicPropertyImpl, StatusListPropertyImpl, TfFramePropertyImpl, VectorPropertyImpl,
+  BoolPropertyImpl, ColorPropertyImpl, EnumPropertyImpl, FIXED_FRAME_STRING, FloatPropertyImpl, GroupProperty, IntPropertyImpl,
+  RosTopicPropertyImpl, StatusListPropertyImpl, TfFramePropertyImpl, VectorPropertyImpl, setTfFrameSource,
 } from './Property';
 import { parseColor, printColor } from './color';
 
@@ -114,5 +115,36 @@ describe('Property YAML codec (rviz_common rules)', () => {
     p.setValue(2, 'user');
     p.load(3);
     expect(seen).toEqual([[2, 'user'], [3, 'config']]);
+  });
+});
+
+describe('TfFrameProperty frame options', () => {
+  function frameSource(frames: string[]) {
+    const [version, setVersion] = createSignal(0);
+    return { framesVersion: version, frames: () => frames, bump: (next: string[]) => { frames = next; setVersion(version() + 1); } };
+  }
+
+  it('lists "<Fixed Frame>" followed by every TF frame, sorted, and follows the frame list', () => {
+    const src = frameSource(['odom', 'map', 'base_link']);
+    setTfFrameSource(src);
+    try {
+      const ref = new TfFramePropertyImpl('Reference Frame', FIXED_FRAME_STRING, null, () => 'map');
+      expect(ref.frameOptions()).toEqual([FIXED_FRAME_STRING, 'base_link', 'map', 'odom']);
+      src.bump(['map', 'laser']);
+      expect(ref.frameOptions()).toEqual([FIXED_FRAME_STRING, 'laser', 'map']);
+    } finally {
+      setTfFrameSource(null);
+    }
+  });
+
+  it('Fixed Frame itself omits "<Fixed Frame>"; without a source only the static options remain', () => {
+    const fixed = new TfFramePropertyImpl('Fixed Frame', 'map', null, null, { includeFixedFrame: false });
+    expect(fixed.frameOptions()).toEqual([]);
+    setTfFrameSource(frameSource(['map']));
+    try {
+      expect(fixed.frameOptions()).toEqual(['map']);
+    } finally {
+      setTfFrameSource(null);
+    }
   });
 });

@@ -117,3 +117,7 @@ point/pose/select/focus tools, `time_panel.cpp`, `views_panel.cpp`,
 - **Recent Configs without the File System Access API** (plain `http://<LAN IP>`
   origins): the browser cannot re-read a file it has no handle for, so the entry
   reopens a snapshot of the file taken when it was picked, not the file on disk.
+- **Groups switch their children off like rviz's DisplayGroup**: a display
+  inside a disabled `rviz_common/Group` keeps its own checkbox but is not
+  subscribed and opens no Image / Camera panel (`DisplayBase.isActive()`).
+
