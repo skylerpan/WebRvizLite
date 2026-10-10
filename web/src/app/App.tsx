@@ -3,7 +3,7 @@ import { PANEL_TITLES, createLayout } from './layout';
 import { getApp } from './store';
 import { MenuButton, type MenuItem } from './Menu';
 import { AddDisplayDialog } from '../panels/AddDisplayDialog';
-import { hasFileSystemAccess, openConfig, openRecent, recentConfigs, saveConfig, saveConfigAs } from './configIO';
+import { openConfig, openRecent, recentConfigs, saveConfig, saveConfigAs } from './configIO';
 import { SHORTCUTS, installShortcuts, type ShortcutScope } from './shortcuts';
 import { longFrames, measuredFps, renderBackend, resetPerfCounters, toolStatus, worstFrameMs } from '../render/Renderer';
 import { perfSummary, resetPerf } from '../render/perf';
@@ -80,7 +80,7 @@ export function App() {
 
   const fileMenu = (): MenuItem[] => [
     { label: 'Open Config…', shortcut: 'Ctrl+O', onSelect: actions.open },
-    { label: 'Save Config', shortcut: 'Ctrl+S', onSelect: actions.save, disabled: app.source().kind === 'embedded' && !hasFileSystemAccess && false },
+    { label: 'Save Config', shortcut: 'Ctrl+S', onSelect: actions.save },
     { label: 'Save Config As…', shortcut: 'Ctrl+Shift+S', onSelect: actions.saveAs },
     {
       label: 'Recent Configs',

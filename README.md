@@ -198,5 +198,11 @@ plain path string).
 
 ```sh
 make test             # cargo test --workspace && vitest
+make test-e2e         # Playwright: Open / Save / Save As / Recent Configs in Google Chrome against the mock server
 make check            # clippy -D warnings, rustfmt, tsc
 ```
+
+The E2E tests need Google Chrome on the host (`E2E_CHANNEL=chromium` after
+`npx playwright install chromium` works too). They start the mock server with a
+scratch copy of `fixtures/tier1_scene.rviz` and the Vite dev server;
+`E2E_BASE_URL` points them at an already running frontend instead.

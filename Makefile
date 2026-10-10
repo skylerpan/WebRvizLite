@@ -47,6 +47,10 @@ test:
 	cargo test --workspace
 	cd web && npm test
 
+# Browser tests (Playwright + Google Chrome) against the mock server built above.
+test-e2e: build
+	cd web && E2E_SERVER_BIN=../$(CARGO_TARGET_DIR)/release/webrvizlite npm run test:e2e
+
 check:
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo fmt --all -- --check

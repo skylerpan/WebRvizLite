@@ -8,6 +8,11 @@
 /web/dist/
 /web/.vite/
 
+# Playwright (E2E)
+/web/e2e/.tmp/
+/web/test-results/
+/web/playwright-report/
+
 # wasm-pack output
 /web/src/wasm/pkg/
 

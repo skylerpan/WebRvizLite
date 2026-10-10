@@ -1,4 +1,6 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
+import { configDefaults } from 'vitest/config';
 import solid from 'vite-plugin-solid';
 
 export default defineConfig({
@@ -11,6 +13,10 @@ export default defineConfig({
   },
   worker: {
     format: 'es',
+  },
+  test: {
+    // Playwright specs live in e2e/ and are run by `npm run test:e2e`.
+    exclude: [...configDefaults.exclude, 'e2e/**'],
   },
   server: {
     port: 5173,
