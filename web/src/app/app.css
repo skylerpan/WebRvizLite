@@ -168,6 +168,10 @@ select.wrl-edit { background: #1e1e1e; }
 .wrl-add-item { display: block; width: 100%; text-align: left; background: transparent; border: none; color: var(--wrl-fg); padding: 3px 20px; font: inherit; cursor: pointer; }
 .wrl-add-item:hover { background: #2a2a2a; }
 .wrl-add-selected { background: #264f78 !important; }
+.wrl-add-topic { display: flex; flex-direction: column; align-items: flex-start; padding: 3px 8px; overflow-wrap: anywhere; }
+.wrl-add-topic-head { color: var(--wrl-fg); }
+.wrl-add-topic-name { color: var(--wrl-fg); }
+.wrl-add-topic-type { color: var(--wrl-fg-dim); font-size: 11px; line-height: 1.2; }
 .wrl-add-desc { font-size: 12px; color: var(--wrl-fg-dim); overflow: auto; }
 .wrl-modal-row { padding: 4px 12px; }
 .wrl-modal-row label { display: flex; align-items: center; gap: 8px; }

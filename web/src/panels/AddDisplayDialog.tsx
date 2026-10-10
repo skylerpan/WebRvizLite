@@ -1,12 +1,14 @@
 /**
  * rviz_common AddDisplayDialog: "By display type" lists every registered
  * Display grouped by package; "By topic" lists graph topics that have a
- * matching Display (a topic can offer several). A display name can be typed.
+ * matching Display. A topic with one matching Display is selectable as a row
+ * by itself; one with several lists them beneath it. A display name can be typed.
  */
 
 import { For, Show, createMemo, createSignal, type JSX } from 'solid-js';
 import { getApp } from '../app/store';
 import type { DisplayClassInfo } from '../displays/types';
+import { groupTopicsByDisplay } from './addByTopic';
 
 export interface AddDisplayResult {
   classId: string;
@@ -33,16 +35,7 @@ export function AddDisplayDialog(props: { onClose: (result: AddDisplayResult | n
     return [...groups.entries()].map(([pkg, list]) => ({ pkg, list: list.sort((a, b) => a.name.localeCompare(b.name)) }));
   });
 
-  const byTopic = createMemo(() => {
-    const out: { topic: string; type: string; displays: DisplayClassInfo[] }[] = [];
-    for (const t of app.bridge.topics()) {
-      for (const type of t.types) {
-        const displays = registry.all().filter((d) => d.messageTypes.includes(type));
-        if (displays.length) out.push({ topic: t.name, type, displays });
-      }
-    }
-    return out.sort((a, b) => a.topic.localeCompare(b.topic));
-  });
+  const byTopic = createMemo(() => groupTopicsByDisplay(app.bridge.topics(), registry.all()));
 
   const choose = (info: DisplayClassInfo, topic?: string) => {
     setSelected({ info, topic });
@@ -87,16 +80,29 @@ export function AddDisplayDialog(props: { onClose: (result: AddDisplayResult | n
               <Show when={byTopic().length === 0}><div class="wrl-dim" style={{ padding: '8px' }}>No topics with a matching display.</div></Show>
               <For each={byTopic()}>
                 {(t) => (
-                  <>
-                    <div class="wrl-add-pkg">{t.topic} <span class="wrl-dim">({t.type})</span></div>
-                    <For each={t.displays}>
-                      {(info) => (
-                        <button type="button" class="wrl-add-item" classList={{ 'wrl-add-selected': selected()?.info === info && selected()?.topic === t.topic }} onClick={() => choose(info, t.topic)} onDblClick={() => { choose(info, t.topic); ok(); }}>
-                          {info.name}
-                        </button>
-                      )}
-                    </For>
-                  </>
+                  <Show
+                    when={t.displays.length === 1}
+                    fallback={
+                      <>
+                        <div class="wrl-add-topic wrl-add-topic-head">
+                          <span class="wrl-add-topic-name">{t.topic}</span>
+                          <span class="wrl-add-topic-type">{t.type}</span>
+                        </div>
+                        <For each={t.displays}>
+                          {(info) => (
+                            <button type="button" class="wrl-add-item" classList={{ 'wrl-add-selected': selected()?.info === info && selected()?.topic === t.topic }} onClick={() => choose(info, t.topic)} onDblClick={() => { choose(info, t.topic); ok(); }}>
+                              {info.name}
+                            </button>
+                          )}
+                        </For>
+                      </>
+                    }
+                  >
+                    <button type="button" class="wrl-add-item wrl-add-topic" classList={{ 'wrl-add-selected': selected()?.info === t.displays[0] && selected()?.topic === t.topic }} onClick={() => choose(t.displays[0], t.topic)} onDblClick={() => { choose(t.displays[0], t.topic); ok(); }}>
+                      <span class="wrl-add-topic-name">{t.topic}</span>
+                      <span class="wrl-add-topic-type">{t.type}</span>
+                    </button>
+                  </Show>
                 )}
               </For>
             </div>
