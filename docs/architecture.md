@@ -196,7 +196,13 @@ already in the fixed frame when it arrives.
   are understood, everything else is kept verbatim), `AppStore` applies the
   dock layout first and then `VisualizationManager.load()`. Save serialises
   the property tree back and `POST /api/display-config` writes the file in
-  place; Save As / Open use the File System Access API or a download.
+  place. `configIO.ts` handles Open / Save As: the File System Access API in
+  secure contexts (handles are kept in IndexedDB so Recent Configs can reopen
+  and write them), otherwise a hidden `<input type=file>` that stays attached
+  to the document while the dialog is open (a detached one is garbage-collected
+  and its `change` event lost) and a download for Save As; files opened that
+  way are remembered as text snapshots. The startup config is skipped when the
+  user already opened a file before the WebSocket `hello` arrived.
 
 ### 2.5 Picking and selection
 
@@ -389,6 +395,7 @@ roots. Config Save writes only the file the server was started with.
 | `web/src/render` | `Renderer.ts` Viewport · `picking.ts` · `tf.ts` · `instanced.ts`, `instancedShapes.ts`, `pointCloud.ts`, `primitives.ts`, `covarianceVisual.ts`, `poseShape.ts` · `meshLoader.ts`, `urdf.ts` · `mapPalette.ts` · `input.ts` · `perf.ts` |
 | `web/src/worker` | `worker.ts` · `client.ts` · `messages.ts` · `decoders.ts` · `delivery.ts` |
 | `web/src/tools`, `web/src/views`, `web/src/panels`, `web/src/property`, `web/src/config` | tools and `ToolManager` · view controllers and `ViewManager` · dock panels · property model, tree and editors · `rvizConfig.ts` |
+| `web/e2e`, `web/playwright.config.ts` | Playwright E2E: `start-server.mjs` (mock server on a scratch copy of `fixtures/default.rviz`) · `config.spec.ts` (Open / Save / Save As / Recent Configs) · `.tmp/` is ignored |
 | `fixtures/` | `.rviz` scenes (`mock_scene`, `tier1_scene`, nav2 samples) and `robot_description/` URDF + meshes |
 | `tools/mock_scene.py` | rclpy publisher of the mock scene for the r2r path |
 | `docker/` | ROS 2 Humble build container, compose file, livox msgs |
@@ -409,7 +416,9 @@ flowchart LR
 - `make build` runs the three steps; `make dev` runs the server with
   `--web-dir web/dist` plus the Vite dev server (port 5173, proxying `/ws` and
   `/api` to 8765). `make check` = clippy `-D warnings`, `cargo fmt --check`,
-  `tsc --noEmit`; `make test` = `cargo test --workspace` + vitest.
+  `tsc --noEmit`; `make test` = `cargo test --workspace` + vitest;
+  `make test-e2e` builds the server and runs the Playwright suite in
+  `web/e2e/` against Google Chrome (`channel: 'chrome'`, no browser download).
 - `make mock-rust` / `make mock-rust-tier1` start `--mock` with the two fixture
   scenes; `make docker-*` build and run the ROS flavour in the Humble image.
 - Nested crate `target/` directories are ignored (`.gitignore`); use
@@ -470,10 +479,21 @@ laser, livox_frame}`.
 - Rust: inline `#[cfg(test)]` modules in `core` (protocol, cdr, pointcloud,
   math, wire, tf, covariance, image, every `msgs/*`), `server/hub.rs` and
   `bridge/mock.rs`; `cargo test --workspace`.
-- Web (vitest, jsdom where three.js is involved): `config/rvizConfig`,
-  `property/Property`, `displays/robotModel`, `render/{urdf, picking,
-  mapPalette, covarianceVisuals}`, `worker/{delivery, client}`,
-  `views/{orbit, views}`.
+- Web (vitest, jsdom where the DOM or three.js is involved): `config/rvizConfig`,
+  `app/{configIO, store}`, `property/Property`, `displays/robotModel`,
+  `render/{urdf, picking, mapPalette, covarianceVisuals}`,
+  `worker/{delivery, client}`, `views/{orbit, views}`. `configIO.test.ts`
+  stubs the pickers and IndexedDB; `store.test.ts` builds `AppStore` with a
+  fake bridge and layout.
+- E2E (Playwright, `web/e2e/config.spec.ts`, `make test-e2e`): `start-server.mjs`
+  copies `fixtures/default.rviz` to `web/e2e/.tmp/server.rviz` and starts
+  `--mock -d` on it; `playwright.config.ts` also starts Vite. The specs cover
+  Open through the real Chrome file dialog (driven over CDP with a forced GC,
+  which is what broke the detached input), Recent Configs after a reload, Save
+  As and Ctrl+S downloads, Ctrl+S writing the server file, and the File System
+  Access path with stubbed pickers. The Displays tree is virtualised, so the
+  specs assert on its scrolled tail; traces are off because the WebGL page
+  produces truncated ones.
 - Performance: `?perf` shows FPS, long frames and the worst time per section
   (`web/src/render/perf.ts`); `?debug` opens the Debug panel with per-topic
   Hz, bytes, dropped frames, transport and wasm memory. The measurement

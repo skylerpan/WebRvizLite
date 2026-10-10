@@ -147,7 +147,11 @@ Chrome reserves Ctrl+N / Ctrl+T / Ctrl+W, so a few RViz bindings differ
 
 Save writes back where the config came from: the `-d` file through the
 server, a file opened with the File System Access API in place, otherwise a
-download. Recent configs are kept in localStorage (file handles in IndexedDB).
+download. That API only exists in secure contexts (`https://` or
+`localhost`); on a plain `http://<host>` page Open uses the browser's file
+dialog and Save As downloads the file. Recent Configs are kept in
+localStorage, with the file handle (or, without the API, a snapshot of the
+file taken when it was opened) in IndexedDB.
 
 ## Mock scene
 
@@ -202,7 +206,11 @@ make test-e2e         # Playwright: Open / Save / Save As / Recent Configs in Go
 make check            # clippy -D warnings, rustfmt, tsc
 ```
 
-The E2E tests need Google Chrome on the host (`E2E_CHANNEL=chromium` after
-`npx playwright install chromium` works too). They start the mock server with a
-scratch copy of `fixtures/tier1_scene.rviz` and the Vite dev server;
-`E2E_BASE_URL` points them at an already running frontend instead.
+Web unit tests live next to their sources as `*.test.ts` (`config/rvizConfig`,
+`app/{configIO, store}`, displays, render, views, worker). The E2E suite in
+`web/e2e/` needs Google Chrome on the host (`E2E_CHANNEL=chromium` after
+`npx playwright install chromium` works too). It starts the mock server with a
+scratch copy of `fixtures/default.rviz` as its `-d` file plus the Vite dev
+server, opens `fixtures/nav2_default_view.rviz` through the real file dialog
+and the stubbed File System Access API, and checks Save / Save As / Recent
+Configs; `E2E_BASE_URL` points it at an already running frontend instead.
