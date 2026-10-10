@@ -147,7 +147,11 @@ Chrome reserves Ctrl+N / Ctrl+T / Ctrl+W, so a few RViz bindings differ
 
 Save writes back where the config came from: the `-d` file through the
 server, a file opened with the File System Access API in place, otherwise a
-download. Recent configs are kept in localStorage (file handles in IndexedDB).
+download. That API only exists in secure contexts (`https://` or
+`localhost`); on a plain `http://<host>` page Open uses the browser's file
+dialog and Save As downloads the file. Recent Configs are kept in
+localStorage, with the file handle (or, without the API, a snapshot of the
+file taken when it was opened) in IndexedDB.
 
 ## Mock scene
 
@@ -194,9 +198,35 @@ plain path string).
 
 *`?debug&perf`: subscribe to topics by hand and watch receive rates; the status bar shows per-display frame times.*
 
+## Versions
+
+The repo has one version: `[workspace.package] version` in the root
+`Cargo.toml` (`0.2.0-dev` while in development). Every Rust crate inherits it,
+`web/vite.config.ts` reads the same line for the frontend, and `make version`
+prints it. Bump it there and nowhere else.
+
+Builds append the git revision as build metadata, `0.2.0-dev+g<short sha>`
+plus `.dirty` when the tree has uncommitted changes (`build.rs` of the server
+and WASM crates, `define` in `web/vite.config.ts`); outside a git checkout the
+bare version is used. The stamp is reported by `webrvizlite --version`,
+`hello.version`, the status bar (`Web: v… · WASM: v…`, `Server: … (v…)`) and
+Help → About. The three are built from the same number, so if they differ a
+part of the deployment is stale (an old `web/src/wasm/pkg`, a cached bundle or
+an old server binary).
+
 ## Tests
 
 ```sh
 make test             # cargo test --workspace && vitest
+make test-e2e         # Playwright: Open / Save / Save As / Recent Configs in Google Chrome against the mock server
 make check            # clippy -D warnings, rustfmt, tsc
 ```
+
+Web unit tests live next to their sources as `*.test.ts` (`config/rvizConfig`,
+`app/{configIO, store}`, displays, render, views, worker). The E2E suite in
+`web/e2e/` needs Google Chrome on the host (`E2E_CHANNEL=chromium` after
+`npx playwright install chromium` works too). It starts the mock server with a
+scratch copy of `fixtures/default.rviz` as its `-d` file plus the Vite dev
+server, opens `fixtures/nav2_default_view.rviz` through the real file dialog
+and the stubbed File System Access API, and checks Save / Save As / Recent
+Configs; `E2E_BASE_URL` points it at an already running frontend instead.

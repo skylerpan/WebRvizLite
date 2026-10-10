@@ -3,7 +3,7 @@ import { PANEL_TITLES, createLayout } from './layout';
 import { getApp } from './store';
 import { MenuButton, type MenuItem } from './Menu';
 import { AddDisplayDialog } from '../panels/AddDisplayDialog';
-import { hasFileSystemAccess, openConfig, openRecent, recentConfigs, saveConfig, saveConfigAs } from './configIO';
+import { openConfig, openRecent, recentConfigs, saveConfig, saveConfigAs } from './configIO';
 import { SHORTCUTS, installShortcuts, type ShortcutScope } from './shortcuts';
 import { longFrames, measuredFps, renderBackend, resetPerfCounters, toolStatus, worstFrameMs } from '../render/Renderer';
 import { perfSummary, resetPerf } from '../render/perf';
@@ -22,7 +22,7 @@ export function App() {
     const sub = l.api.onDidLayoutChange(() => setLayoutVersion(layoutVersion() + 1));
     if (import.meta.env.DEV) {
       // Debug handle for the dev console / automated checks; stripped from production builds.
-      (window as unknown as { __wrl?: unknown }).__wrl = { layout: l, bridge, app };
+      (window as unknown as { __wrl?: unknown }).__wrl = { layout: l, bridge, app, version: __WRL_VERSION__ };
     }
     onCleanup(() => {
       sub.dispose();
@@ -80,7 +80,7 @@ export function App() {
 
   const fileMenu = (): MenuItem[] => [
     { label: 'Open Config…', shortcut: 'Ctrl+O', onSelect: actions.open },
-    { label: 'Save Config', shortcut: 'Ctrl+S', onSelect: actions.save, disabled: app.source().kind === 'embedded' && !hasFileSystemAccess && false },
+    { label: 'Save Config', shortcut: 'Ctrl+S', onSelect: actions.save },
     { label: 'Save Config As…', shortcut: 'Ctrl+Shift+S', onSelect: actions.saveAs },
     {
       label: 'Recent Configs',
@@ -151,7 +151,7 @@ export function App() {
           </span>
           <span class="wrl-dim" title="worst time per section × calls since reset">{perfSummary()}</span>
         </Show>
-        <span>WASM: {bridge.wasmVersion() ?? '…'}</span>
+        <span title="frontend / WASM module versions">Web: v{__WRL_VERSION__} · WASM: v{bridge.wasmVersion() ?? '…'}</span>
         <span classList={{
           'wrl-status-ok': bridge.wsState() === 'connected',
           'wrl-status-warn': bridge.wsState() === 'connecting',
@@ -189,7 +189,8 @@ export function App() {
           <div class="wrl-modal" role="dialog" aria-label="About">
             <div class="wrl-modal-title">About WebRvizLite</div>
             <div class="wrl-about">
-              <div>WebRvizLite — RViz 2 (lyrical) in the browser. Server v{bridge.hello()?.version ?? '?'}, WASM v{bridge.wasmVersion() ?? '?'}, renderer {renderBackend()}.</div>
+              <div>WebRvizLite — RViz 2 (lyrical) in the browser.</div>
+              <div class="wrl-dim">Web v{__WRL_VERSION__} · Server v{bridge.hello()?.version ?? '?'} · WASM v{bridge.wasmVersion() ?? '?'} · renderer {renderBackend()}</div>
               <table>
                 <tbody>
                   <For each={SHORTCUTS}>{(s) => <tr><td><b>{s.keys}</b></td><td>{s.label}</td><td class="wrl-dim">RViz: {s.rviz}</td></tr>}</For>

@@ -192,8 +192,12 @@ fixed frame 裡。
   `GET /api/display-config`，`RvizConfig` 解析 YAML（Panels、Visualization
   Manager、Window Geometry 看得懂，其餘原樣保留），`AppStore` 先套 dock
   layout 再 `VisualizationManager.load()`。Save 把 property tree 序列化回去，
-  `POST /api/display-config` 原地寫檔；Save As / Open 用 File System Access
-  API 或下載。
+  `POST /api/display-config` 原地寫檔。`configIO.ts` 負責 Open / Save As：
+  安全情境（`https://` 或 `localhost`）用 File System Access API（handle 存在
+  IndexedDB，Recent Configs 才能重開並寫回）；否則用隱藏的 `<input type=file>`，
+  對話框開著時它必須留在 document 裡（脫離的 input 會被 GC，`change` 事件就
+  丟了），Save As 則改成下載；這樣開的檔案以文字快照記住。使用者在 WebSocket
+  `hello` 到達前已自行開檔時，啟動設定不會覆蓋它。
 
 ### 2.5 拾取與選取
 
@@ -368,6 +372,7 @@ token，憑證 hash 由瀏覽器釘住。`/api/mesh` 拒絕 package share root �
 | `web/src/render` | `Renderer.ts` Viewport · `picking.ts` · `tf.ts` · `instanced.ts`、`instancedShapes.ts`、`pointCloud.ts`、`primitives.ts`、`covarianceVisual.ts`、`poseShape.ts` · `meshLoader.ts`、`urdf.ts` · `mapPalette.ts` · `input.ts` · `perf.ts` |
 | `web/src/worker` | `worker.ts` · `client.ts` · `messages.ts` · `decoders.ts` · `delivery.ts` |
 | `web/src/tools`、`web/src/views`、`web/src/panels`、`web/src/property`、`web/src/config` | 工具與 `ToolManager` · view controller 與 `ViewManager` · dock 面板 · property 模型、樹與編輯器 · `rvizConfig.ts` |
+| `web/e2e`、`web/playwright.config.ts` | Playwright E2E：`start-server.mjs`（以 `fixtures/default.rviz` 的暫存副本啟動 mock server）· `config.spec.ts`（Open / Save / Save As / Recent Configs）· `.tmp/` 已忽略 |
 | `fixtures/` | `.rviz` 場景（`mock_scene`、`tier1_scene`、nav2 範例）與 `robot_description/` URDF + mesh |
 | `tools/mock_scene.py` | 走 r2r 路徑用的 rclpy mock 場景 publisher |
 | `docker/` | ROS 2 Humble 建置容器、compose 檔、livox msgs |
@@ -388,9 +393,16 @@ flowchart LR
 - `make build` 跑完三步；`make dev` 用 `--web-dir web/dist` 跑 server 加 Vite
   dev server（埠 5173，`/ws` 與 `/api` 代理到 8765）。`make check` = clippy
   `-D warnings`、`cargo fmt --check`、`tsc --noEmit`；`make test` =
-  `cargo test --workspace` + vitest。
+  `cargo test --workspace` + vitest；`make test-e2e` 先建置 server，再用
+  Google Chrome（`channel: 'chrome'`，不用下載瀏覽器）跑 `web/e2e/` 的
+  Playwright 套件。
 - `make mock-rust` / `make mock-rust-tier1` 以 `--mock` 啟動兩個 fixture 場景；
   `make docker-*` 在 Humble 映像裡建置與執行 ROS 版本。
+- 版本：整個 repo 只有一個，在根目錄 `Cargo.toml` 的 `[workspace.package]
+  version`（開發期間為 `0.2.0-dev`）；各 crate 繼承它，`vite.config.ts` 讀同
+  一行給前端。server 與 wasm 的 `build.rs` 和 `vite.config.ts` 的 `define`
+  會附上 `+g<sha>[.dirty]`，由 `--version`、`hello.version`、狀態列與 About
+  顯示；三者不一致代表某部分是舊的。`make version` 印出它。
 - 巢狀 crate 的 `target/` 已在 `.gitignore`；預設 target 不可寫時用
   `CARGO_TARGET_DIR`。
 
@@ -449,10 +461,20 @@ laser, livox_frame}`。
 - Rust：`core` 內嵌 `#[cfg(test)]`（protocol、cdr、pointcloud、math、wire、
   tf、covariance、image、所有 `msgs/*`）、`server/hub.rs`、`bridge/mock.rs`；
   `cargo test --workspace`。
-- Web（vitest，用到 three.js 的檔案跑 jsdom）：`config/rvizConfig`、
-  `property/Property`、`displays/robotModel`、`render/{urdf, picking,
-  mapPalette, covarianceVisuals}`、`worker/{delivery, client}`、
-  `views/{orbit, views}`。
+- Web（vitest，用到 DOM 或 three.js 的檔案跑 jsdom）：`config/rvizConfig`、
+  `app/{configIO, store}`、`property/Property`、`displays/robotModel`、
+  `render/{urdf, picking, mapPalette, covarianceVisuals}`、
+  `worker/{delivery, client}`、`views/{orbit, views}`。`configIO.test.ts`
+  替換 picker 與 IndexedDB；`store.test.ts` 用假的 bridge 和 layout 建
+  `AppStore`。
+- E2E（Playwright，`web/e2e/config.spec.ts`，`make test-e2e`）：
+  `start-server.mjs` 把 `fixtures/default.rviz` 複製到
+  `web/e2e/.tmp/server.rviz` 並以 `--mock -d` 啟動；`playwright.config.ts`
+  同時啟動 Vite。測試涵蓋：透過真正的 Chrome 檔案對話框 Open（經 CDP 驅動並
+  強制 GC，正是脫離 input 當初壞掉的情境）、重新整理後的 Recent Configs、
+  Save As 與 Ctrl+S 下載、Ctrl+S 寫回 server 檔案、以及替換 picker 的 File
+  System Access 路徑。Displays 樹是虛擬化的，所以測試捲到尾端再比對；WebGL
+  頁面的 trace 會截斷，因此關閉。
 - 效能：`?perf` 顯示 FPS、long frames 與各 section 最差時間
   （`web/src/render/perf.ts`）；`?debug` 開 Debug 面板，有每 topic 的 Hz、
   bytes、dropped、傳輸方式與 wasm 記憶體。量測流程與探針見

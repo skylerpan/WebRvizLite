@@ -114,3 +114,6 @@ point/pose/select/focus tools, `time_panel.cpp`, `views_panel.cpp`,
 - **Link trails (`Show Trail`)** are stored but not drawn.
 - **Camera / Image `Transport Override`** is stored but has no effect
   (image_transport is Tier 2).
+- **Recent Configs without the File System Access API** (plain `http://<LAN IP>`
+  origins): the browser cannot re-read a file it has no handle for, so the entry
+  reopens a snapshot of the file taken when it was picked, not the file on disk.

@@ -7,6 +7,7 @@
 import { createSignal, type Accessor } from 'solid-js';
 import * as THREE from 'three/webgpu';
 import { getBridge } from './bridge';
+import type { BridgeClient } from '../worker/client';
 import { VisualizationManager } from '../displays/manager';
 import { DEFAULT_DISPLAYS_PANEL_STATE, RvizConfig, type DisplaysPanelState, type TimePanelState, type TreePanelState } from '../config/rvizConfig';
 import { RVIZ_PANELS, type Layout } from './layout';
@@ -22,8 +23,8 @@ const DEFAULT_TOOL_PROPS_EXPANDED = ['/2D Pose Estimate1', '/2D Goal Pose1', '/P
 
 export class AppStore {
   readonly scene = new THREE.Scene();
-  readonly bridge = getBridge();
-  readonly manager = new VisualizationManager(this.scene, this.bridge);
+  readonly bridge: BridgeClient;
+  readonly manager: VisualizationManager;
   /** Last loaded config document; sections we own are replaced on save. */
   config = new RvizConfig();
   readonly displaysPanel: Accessor<DisplaysPanelState>;
@@ -37,7 +38,7 @@ export class AppStore {
   /** The dockview layout once the main window is mounted. */
   readonly layout: Accessor<Layout | null>;
   readonly setLayout: (l: Layout | null) => void;
-  readonly selection = this.manager.selection;
+  readonly selection: VisualizationManager['selection'];
   readonly configName: Accessor<string>;
   readonly setConfigName: (s: string) => void;
   /** Expanded nodes of the Displays and Views trees (paths are computed at save time). */
@@ -53,7 +54,10 @@ export class AppStore {
   readonly dialog: Accessor<'addDisplay' | 'addTool' | 'about' | null>;
   readonly setDialog: (d: 'addDisplay' | 'addTool' | 'about' | null) => void;
 
-  constructor() {
+  constructor(bridge: BridgeClient = getBridge()) {
+    this.bridge = bridge;
+    this.manager = new VisualizationManager(this.scene, bridge);
+    this.selection = this.manager.selection;
     const [dp, setDp] = createSignal<DisplaysPanelState>(DEFAULT_DISPLAYS_PANEL_STATE);
     this.displaysPanel = dp;
     this.setDisplaysPanel = setDp;
@@ -143,8 +147,13 @@ export class AppStore {
     return this.config.stringify();
   }
 
-  /** Startup: `-d` config from the server if any, else the built-in default. */
-  async loadStartupConfig(displayConfigPath: string | null) {
+  /**
+   * Startup: `-d` config from the server if any, else the built-in default.
+   * Skipped when the user already opened a config (the WebSocket `hello` can
+   * arrive after a Ctrl+O); `force` reloads anyway (Recent Configs → server entry).
+   */
+  async loadStartupConfig(displayConfigPath: string | null, opts: { force?: boolean } = {}) {
+    if (!opts.force && this.source().kind !== 'embedded') return;
     if (displayConfigPath) {
       try {
         const res = await fetch('/api/display-config');

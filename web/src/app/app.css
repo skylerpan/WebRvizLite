@@ -145,7 +145,7 @@ select.wrl-edit { background: #1e1e1e; }
 /* Menus */
 .wrl-menu { position: relative; }
 .wrl-menu-open { background: #3a3a3a; }
-.wrl-menu-dropdown { position: absolute; top: 100%; left: 0; min-width: 240px; background: #252526; border: 1px solid var(--wrl-border); box-shadow: 0 4px 12px rgba(0,0,0,0.5); z-index: 1000; padding: 4px 0; }
+.wrl-menu-dropdown { position: absolute; top: 100%; left: 0; min-width: 240px; background: #252526; border: 1px solid var(--wrl-border); box-shadow: 0 4px 12px rgba(0,0,0,0.5); z-index: 1500; padding: 4px 0; } /* above dockview's floating panels (--dv-overlay-z-index 999 + 1) */
 .wrl-menu-item { display: flex; width: 100%; align-items: center; gap: 8px; background: transparent; border: none; color: var(--wrl-fg); padding: 4px 10px; font: inherit; text-align: left; cursor: pointer; }
 .wrl-menu-item:hover:not(:disabled) { background: #264f78; }
 .wrl-menu-item:disabled { color: #666; cursor: default; }

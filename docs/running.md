@@ -130,3 +130,17 @@ ls web/dist/assets
 
 For development use `--web-dir web/dist` (what `make dev` does) so the binary
 serves the directory instead of the embedded copy.
+
+## Double-clicking a file in Chrome's Open dialog does nothing
+
+**Symptom:** Ctrl+O opens the dialog, double-clicking a `.rviz` file closes
+it, nothing loads. Selecting the file and pressing Open (or Enter) works.
+
+**Cause:** the GTK3 file chooser Chrome uses on Linux reports the double-click
+as a cancel; the page receives a `cancel` event with no file. Reproduced on
+Ubuntu 20.04 with Chrome 154 on a page containing only a bare
+`<input type=file>`, so it is not WebRvizLite.
+
+**Fix:** use the Open button or Enter. A newer GTK or Chrome, or toggling the
+portal file chooser in `chrome://flags`, may change the behaviour.
+

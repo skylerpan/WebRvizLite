@@ -64,7 +64,7 @@ impl AppState {
             None
         };
         ServerMessage::Hello {
-            version: env!("CARGO_PKG_VERSION").into(),
+            version: env!("WRL_BUILD_VERSION").into(),
             ros_distro: t.ros_distro(),
             mock: self.mock,
             use_sim_time: t.use_sim_time(),
