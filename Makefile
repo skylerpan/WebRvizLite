@@ -13,9 +13,15 @@ CARGO_TARGET_DIR ?= target
 export CARGO_TARGET_DIR
 MOCK_PORT ?= 8765
 
-.PHONY: build wasm web server server-ros dev test check clean docker-build docker-shell docker-build-all docker-build-ros docker-run-ros docker-run-rosd mock-rust mock-rust-tier1 docker-mock-ros
+.PHONY: version build wasm web server server-ros dev test check clean docker-build docker-shell docker-build-all docker-build-ros docker-run-ros docker-run-rosd mock-rust mock-rust-tier1 docker-mock-ros
 
 build: wasm web server
+
+# The repo version ([workspace.package] in Cargo.toml) as the builds stamp it: <version>+g<sha>[.dirty].
+version:
+	@v=$$(sed -n '/^\[workspace\.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml); \
+	 g=$$(git rev-parse --short=9 HEAD 2>/dev/null); d=$$(test -z "$$(git status --porcelain --untracked-files=no 2>/dev/null)" || echo .dirty); \
+	 echo "$$v$${g:++g$$g$$d}"
 
 wasm: $(WASM_OUT)/webrvizlite.js
 

@@ -398,6 +398,11 @@ flowchart LR
   Playwright 套件。
 - `make mock-rust` / `make mock-rust-tier1` 以 `--mock` 啟動兩個 fixture 場景；
   `make docker-*` 在 Humble 映像裡建置與執行 ROS 版本。
+- 版本：整個 repo 只有一個，在根目錄 `Cargo.toml` 的 `[workspace.package]
+  version`（開發期間為 `0.2.0-dev`）；各 crate 繼承它，`vite.config.ts` 讀同
+  一行給前端。server 與 wasm 的 `build.rs` 和 `vite.config.ts` 的 `define`
+  會附上 `+g<sha>[.dirty]`，由 `--version`、`hello.version`、狀態列與 About
+  顯示；三者不一致代表某部分是舊的。`make version` 印出它。
 - 巢狀 crate 的 `target/` 已在 `.gitignore`；預設 target 不可寫時用
   `CARGO_TARGET_DIR`。
 

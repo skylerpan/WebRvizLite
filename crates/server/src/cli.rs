@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[derive(Debug, clap::Parser)]
 #[command(
     name = "webrvizlite",
-    version,
+    version = env!("WRL_BUILD_VERSION"),
     about = "ROS 2 visualization in the browser"
 )]
 pub struct Args {

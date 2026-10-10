@@ -15,10 +15,11 @@ use webrvizlite_core::pointcloud::{self, ColorOptions, Transformer};
 use webrvizlite_core::tf;
 use webrvizlite_core::wire;
 
-/// Crate version, used by the worker to confirm the WASM module loaded.
+/// Crate version plus git revision (`0.2.0-dev+g<sha>`), used by the worker to
+/// confirm the WASM module loaded and shown in the status bar / About.
 #[wasm_bindgen]
 pub fn version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
+    env!("WRL_BUILD_VERSION").to_string()
 }
 
 /// Decoded binary frame header (spec §4.3).

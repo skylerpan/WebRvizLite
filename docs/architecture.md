@@ -421,6 +421,12 @@ flowchart LR
   `web/e2e/` against Google Chrome (`channel: 'chrome'`, no browser download).
 - `make mock-rust` / `make mock-rust-tier1` start `--mock` with the two fixture
   scenes; `make docker-*` build and run the ROS flavour in the Humble image.
+- Version: one for the whole repo, `[workspace.package] version` in the root
+  `Cargo.toml` (`0.2.0-dev` while in development); the crates inherit it and
+  `vite.config.ts` reads it for the frontend. `build.rs` of server and wasm and
+  `define` in `vite.config.ts` append `+g<sha>[.dirty]`, shown by `--version`,
+  `hello.version`, the status bar and About; differing stamps mean a stale
+  part. `make version` prints it.
 - Nested crate `target/` directories are ignored (`.gitignore`); use
   `CARGO_TARGET_DIR` when the default target is not writable.
 

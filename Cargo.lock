@@ -2425,7 +2425,7 @@ dependencies = [
 
 [[package]]
 name = "webrvizlite-bridge"
-version = "0.1.0"
+version = "0.2.0-dev"
 dependencies = [
  "bytes",
  "futures-core",
@@ -2441,7 +2441,7 @@ dependencies = [
 
 [[package]]
 name = "webrvizlite-core"
-version = "0.1.0"
+version = "0.2.0-dev"
 dependencies = [
  "libm",
  "serde",
@@ -2451,7 +2451,7 @@ dependencies = [
 
 [[package]]
 name = "webrvizlite-server"
-version = "0.1.0"
+version = "0.2.0-dev"
 dependencies = [
  "axum",
  "bytes",
@@ -2474,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "webrvizlite-wasm"
-version = "0.1.0"
+version = "0.2.0-dev"
 dependencies = [
  "serde",
  "serde_json",

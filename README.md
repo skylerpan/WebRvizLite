@@ -198,6 +198,22 @@ plain path string).
 
 *`?debug&perf`: subscribe to topics by hand and watch receive rates; the status bar shows per-display frame times.*
 
+## Versions
+
+The repo has one version: `[workspace.package] version` in the root
+`Cargo.toml` (`0.2.0-dev` while in development). Every Rust crate inherits it,
+`web/vite.config.ts` reads the same line for the frontend, and `make version`
+prints it. Bump it there and nowhere else.
+
+Builds append the git revision as build metadata, `0.2.0-dev+g<short sha>`
+plus `.dirty` when the tree has uncommitted changes (`build.rs` of the server
+and WASM crates, `define` in `web/vite.config.ts`); outside a git checkout the
+bare version is used. The stamp is reported by `webrvizlite --version`,
+`hello.version`, the status bar (`Web: v… · WASM: v…`, `Server: … (v…)`) and
+Help → About. The three are built from the same number, so if they differ a
+part of the deployment is stale (an old `web/src/wasm/pkg`, a cached bundle or
+an old server binary).
+
 ## Tests
 
 ```sh

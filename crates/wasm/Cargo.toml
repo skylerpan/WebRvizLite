@@ -3,6 +3,7 @@ name = "webrvizlite-wasm"
 version.workspace = true
 edition.workspace = true
 description = "wasm-bindgen wrapper around webrvizlite-core for the Web Worker"
+build = "build.rs"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

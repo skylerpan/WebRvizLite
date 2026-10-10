@@ -2,8 +2,10 @@
 resolver = "2"
 members = ["crates/*"]
 
+# The one version of the whole repo: every crate inherits it and the web build
+# reads it (web/vite.config.ts). Bump it here only; see README "Versions".
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0-dev"
 edition = "2024"
 
 [workspace.dependencies]
