@@ -138,6 +138,16 @@ impl TfBuffer {
             return true;
         }
         f.is_static = false;
+        // A sample older than the whole cache window means the publisher's clock
+        // was reset (e.g. a sim restarted at t=0). tf2 would drop it as
+        // TF_OLD_DATA and rviz2 clears its buffer on a clock jump; a viewer is
+        // better off following the new clock, so start this frame's history over.
+        if f.history
+            .back()
+            .is_some_and(|(t, _)| *t > stamp_ns.saturating_add(self.cache_ns))
+        {
+            f.history.clear();
+        }
         // Keep history sorted by stamp; out-of-order samples go in place.
         match f.history.back() {
             Some((t, _)) if *t <= stamp_ns => f.history.push_back((stamp_ns, tf)),
@@ -402,6 +412,37 @@ mod tests {
             false,
             1
         ));
+    }
+
+    #[test]
+    fn restarted_clock_replaces_stale_history() {
+        let mut b = TfBuffer::default(); // 10 s cache
+        let at = |x: f64| Transform::new([x, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]);
+        b.insert("map", "base", 100_000_000_000, at(1.0), false, 0);
+        b.insert("map", "base", 300_000_000_000, at(2.0), false, 0);
+        // Out of order but within the cache: goes in place, latest unchanged.
+        b.insert("map", "base", 295_000_000_000, at(1.5), false, 0);
+        assert_eq!(b.latest_stamp("base"), Some(300_000_000_000));
+        assert!(close(
+            b.lookup("map", "base", 0).unwrap().t,
+            [2.0, 0.0, 0.0]
+        ));
+        // The publisher restarted at t=0: the old run must not stay "latest".
+        b.insert("map", "base", 50_000_000, at(0.0), false, 0);
+        assert_eq!(b.latest_stamp("base"), Some(50_000_000));
+        assert!(close(
+            b.lookup("map", "base", 0).unwrap().t,
+            [0.0, 0.0, 0.0]
+        ));
+        b.insert("map", "base", 100_000_000, at(0.1), false, 0);
+        assert!(close(
+            b.lookup("map", "base", 75_000_000).unwrap().t,
+            [0.05, 0.0, 0.0]
+        ));
+        assert_eq!(
+            b.lookup("map", "base", 300_000_000_000),
+            Err(TfError::Extrapolation)
+        );
     }
 
     #[test]

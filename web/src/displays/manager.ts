@@ -38,13 +38,17 @@ export class TimeState {
     [this.wallStartNs, this.setWallStart] = createSignal(0n);
     const clockNs = () => bridge.clock()?.rosTimeNs ?? 0n;
     this.rosTimeNs = () => (this.paused() ? this.frozenNs : clockNs());
-    // Elapsed counters start at the first clock message.
+    // Elapsed counters start at the first clock message, and start over when ROS
+    // time goes backwards (a sim restarted at t=0): elapsed must not turn negative.
+    let lastRosNs = 0n;
     createEffect(() => {
       const c = bridge.clock();
       if (!c) return;
       untrack(() => {
-        if (this.rosStartNs() === 0n) this.setRosStart(c.rosTimeNs);
-        if (this.wallStartNs() === 0n) this.setWallStart(c.wallTimeNs);
+        const wentBack = c.rosTimeNs < lastRosNs;
+        lastRosNs = c.rosTimeNs;
+        if (wentBack || this.rosStartNs() === 0n) this.setRosStart(c.rosTimeNs);
+        if (wentBack || this.wallStartNs() === 0n) this.setWallStart(c.wallTimeNs);
       });
     });
   }

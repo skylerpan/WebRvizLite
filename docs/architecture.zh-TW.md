@@ -164,11 +164,13 @@ sequenceDiagram
 
   S-->>W: /tf（30 Hz）、/tf_static（latched）frames
   W->>W: TfBuffer.pushTfMessage（10 s cache，static 只留一筆）
+  Note over W: 樣本比該 frame 最新一筆舊超過 cache<br/>→ 該 frame 歷史重來（發布端時鐘重置）
   loop 每 1/tfRateHz（預設 30 Hz，來自 Global Options → Frame Rate）
     W-->>C: {type:'tf', poses Float64Array(9 × frames), names?, parents?}
     C->>C: TfSnapshot.apply() → version signal
   end
   S-->>W: {op:'clock', ros_time_ns, wall_time_ns} 每 100 ms
+  Note over W: ROS time 倒退（sim 重開）→ TfBuffer.clear()，同 rviz2 resetTime
   W-->>C: {type:'clock'}
   C->>V: TimeState.rosTimeNs（Pause 時凍結）
   V->>W: tf_time(timeNs)（暫停時 snapshot 固定在該時間）

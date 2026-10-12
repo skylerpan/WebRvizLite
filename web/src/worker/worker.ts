@@ -62,6 +62,8 @@ let tfBuffer: TfBuffer | null = null;
 let wasmMemory: WebAssembly.Memory | null = null;
 let lastFrameCount = -1;
 let lastNamesJson = '';
+/** Last ROS time from the server, to detect a clock running backwards (sim restart). */
+let lastRosTimeNs = 0n;
 
 export const wallNowNs = () => BigInt(Math.round((performance.timeOrigin + performance.now()) * 1e6));
 
@@ -246,9 +248,21 @@ function onControl(text: string) {
     case 'topics':
       post({ type: 'topics', topics: msg.topics as never });
       break;
-    case 'clock':
-      post({ type: 'clock', rosTimeNs: BigInt(msg.ros_time_ns as number), wallTimeNs: BigInt(msg.wall_time_ns as number) });
+    case 'clock': {
+      const rosTimeNs = BigInt(msg.ros_time_ns as number);
+      // ROS time went backwards (a sim restarted at t=0 with use_sim_time): every stored
+      // transform is now "in the future" and the old pose would stay the latest forever.
+      // rviz2 resets its tf buffer on the same condition (VisualizationManager::resetTime).
+      if (rosTimeNs < lastRosTimeNs && tfBuffer) {
+        console.info(`[worker] ROS time went back (${lastRosTimeNs} -> ${rosTimeNs} ns): TF buffer reset`);
+        tfBuffer.clear();
+        lastFrameCount = -1;
+        lastNamesJson = '';
+      }
+      lastRosTimeNs = rosTimeNs;
+      post({ type: 'clock', rosTimeNs, wallTimeNs: BigInt(msg.wall_time_ns as number) });
       break;
+    }
     case 'error': {
       const id = (msg.id as number | null) ?? null;
       const message = String(msg.message);

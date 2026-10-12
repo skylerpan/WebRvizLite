@@ -166,11 +166,13 @@ sequenceDiagram
 
   S-->>W: /tf (30 Hz), /tf_static (latched) frames
   W->>W: TfBuffer.pushTfMessage (10 s cache, static = one sample)
+  Note over W: a sample older than the frame's newest by more than the cache<br/>restarts that frame's history (publisher clock reset)
   loop every 1/tfRateHz (default 30 Hz, from Global Options → Frame Rate)
     W-->>C: {type:'tf', poses Float64Array(9 × frames), names? , parents?}
     C->>C: TfSnapshot.apply() → version signal
   end
   S-->>W: {op:'clock', ros_time_ns, wall_time_ns} every 100 ms
+  Note over W: ROS time went backwards (sim restart) → TfBuffer.clear(), like rviz2 resetTime
   W-->>C: {type:'clock'}
   C->>V: TimeState.rosTimeNs (frozen while Pause)
   V->>W: tf_time(timeNs) when paused (snapshots at that time)
