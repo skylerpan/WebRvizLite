@@ -415,6 +415,20 @@ export class QuaternionPropertyImpl extends PropertyBase<Xyzw> implements Quater
 
 export const FIXED_FRAME_STRING = '<Fixed Frame>';
 
+/** Where TF frame properties get their frame list (the tf snapshot; `TfSnapshot` has this shape). */
+export interface TfFrameSource {
+  /** Bumps when the frame list changes. */
+  framesVersion: Accessor<number>;
+  frames(): readonly string[];
+}
+
+const [tfFrameSource, setTfFrameSourceSignal] = createSignal<TfFrameSource | null>(null);
+
+/** Registers the app-wide frame list for every TfFrameProperty (set once by the VisualizationManager). */
+export function setTfFrameSource(src: TfFrameSource | null) {
+  setTfFrameSourceSignal(src);
+}
+
 /** rviz TfFrameProperty: editable enum of TF frames, optionally with "<Fixed Frame>". */
 export class TfFramePropertyImpl extends EnumPropertyImpl implements TfFrameProperty {
   declare readonly kind: 'editable_enum';
@@ -426,6 +440,14 @@ export class TfFramePropertyImpl extends EnumPropertyImpl implements TfFrameProp
     opts: PropertyOptions & { includeFixedFrame?: boolean } = {},
   ) {
     super(name, defaultValue, opts.includeFixedFrame ?? true ? [FIXED_FRAME_STRING] : [], parent, { ...opts, editable: true });
+  }
+  /** Dropdown entries: the static options ("<Fixed Frame>") followed by every known TF frame, sorted. Reactive. */
+  frameOptions(): readonly string[] {
+    const src = tfFrameSource();
+    const base = this.options();
+    if (!src) return base;
+    src.framesVersion();
+    return [...base, ...[...src.frames()].sort()];
   }
   frameId(): string {
     let v = this.value();

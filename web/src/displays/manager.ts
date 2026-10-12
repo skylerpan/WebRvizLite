@@ -6,7 +6,7 @@
 
 import { createEffect, createSignal, untrack, type Accessor } from 'solid-js';
 import * as THREE from 'three/webgpu';
-import { ColorPropertyImpl, GroupProperty, IntPropertyImpl, StatusListPropertyImpl, TfFramePropertyImpl, stripLeadingSlash } from '../property/Property';
+import { ColorPropertyImpl, GroupProperty, IntPropertyImpl, StatusListPropertyImpl, TfFramePropertyImpl, stripLeadingSlash, setTfFrameSource } from '../property/Property';
 import type { Rgb, YamlMap, YamlValue } from '../property/types';
 import type { BridgeClient } from '../worker/client';
 import { DisplayGroupImpl } from './Display';
@@ -127,14 +127,13 @@ export class VisualizationManager {
       this.root.fixedFrameChanged();
     });
     bridge.setFixedFrame(fixedFrame());
-    // Fixed Frame options come from the tf buffer; Global Status reports whether it exists.
+    // Every TF frame property (Fixed Frame, Reference Frame, Target Frame, ...) lists the tf buffer's frames.
+    setTfFrameSource(bridge.tf);
+    // Global Status reports whether the Fixed Frame exists.
     createEffect(() => {
       bridge.tf.framesVersion();
       // untrack: property internals (children signals) must not re-trigger this effect.
-      untrack(() => {
-        this.fixedFrameProperty.setOptions([...bridge.tf.frames()]);
-        this.updateFixedFrameStatus();
-      });
+      untrack(() => this.updateFixedFrameStatus());
     });
     this.frameRate.onChange((hz) => bridge.setTfRate(Math.min(60, hz)));
 

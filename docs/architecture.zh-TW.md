@@ -348,6 +348,8 @@ token，憑證 hash 由瀏覽器釘住。`/api/mesh` 拒絕 package share root �
 | instanced 池而不是每個物件一個 mesh | per-instance attribute 與 TSL material 比 `new Mesh` 多程式碼 | 5,000 個 marker 或 100 個 odometry pose 只是幾個 draw call |
 | colour-ID 拾取而不是 raycast | 每次拾取多一次 render 與 GPU readback；pipeline 第一次用時編譯（預熱拾取緩解） | 對 sprite、instance、線、mesh 一致；回傳深度與 instance id |
 | property tree 用 Solid signal | 每個屬性是數個 signal；多子節點編輯要 batch | Displays 面板、編輯器與 status 列不需 diffing 框架就能更新；rviz 的模型直接對映 |
+| Topic / frame 欄位用 `ComboEditor`（`property/editors.tsx`） | 自訂彈出清單（Solid `Portal`、`position: fixed`），不用原生 `<datalist>` | datalist 只列出和已輸入文字相符的項目，欄位有 `/scan` 時就什麼都看不到；portal 不會被樹的 overflow 和 dockview 裁掉。TF frame 屬性透過 `setTfFrameSource` 從 tf 快照取得 frame 清單 |
+| 樹的列穩定（`flattenRows` 的 reuse map） | 路徑相同且未變的 Row 物件直接重用 | keyed `<For>` 在 status 列增減時保留編輯器，打開的清單或打到一半的文字不會消失 |
 | 相容 rviz `.rviz` YAML | 未知 key 與未知 class 要保留而非建模 | 既有 rviz 設定原樣打開、存回不遺失 |
 | 前端內嵌進執行檔（`rust-embed`） | 前端改動要重編 Rust；開發用 `--web-dir` | 複製一個檔案到機器人上就能跑；不需要另外的 web server |
 | 內建 mock transport | mock 得手動鏡射真實 topic（`tools/mock_scene.py` 再為 ROS 鏡射一次） | 沒有 ROS 2 也能開發與量測；規格的效能目標可重現 |
