@@ -182,6 +182,19 @@ Displays that need poses per frame (TF, Axes, Grid, RobotModel, Camera, Map)
 call `TfSnapshot.lookup(frame)` from `update()`; everything with a header is
 already in the fixed frame when it arrives.
 
+**Frame Timeout** (TF display, default 15 s) follows rviz2's `TFDisplay::updateFrame`
+/ `FrameInfo::updateColorForAge`. The buffer stamps each frame with the worker
+wall time at which its newest stamp last changed (`last_update_ns`; a publisher
+repeating the same stamp is not an update). The snapshot's ninth column is the
+oldest such time among the dynamic links on the path to the fixed frame
+(`TfBuffer::last_update_to`, rviz2's "latest common time"), so a stale link ages
+its whole subtree, e.g. a static sensor frame under a `base_link` that stopped
+publishing. Only a path made entirely of static links never ages (`valid = 2`).
+The display draws a frame normally for the first third of the timeout, blends
+it to grey (0.7) over the second third, fades the grey out over the last third
+and hides it past the timeout. Frames are hidden, never removed from the
+buffer, and other displays keep resolving them at the latest time, as in rviz2.
+
 ### 2.4 Publishing, meshes and configuration
 
 - **Publish** (tools): `SetInitialPose`, `SetGoal` and `PublishPoint` build the

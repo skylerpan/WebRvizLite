@@ -65,12 +65,17 @@ export class TfSnapshot {
     return i !== undefined && i < this.count && this.poses[i * STRIDE] >= 1;
   }
 
+  /** Whether every link between `frame` and the fixed frame is static (such a frame never ages). */
   isStatic(frame: string): boolean {
     const i = this.index.get(frame);
     return i !== undefined && i < this.count && this.poses[i * STRIDE] === 2;
   }
 
-  /** Age of the last update of `frame` in seconds (Infinity if unknown). */
+  /**
+   * Seconds since the transform fixed←`frame` last changed (Infinity if
+   * unknown). A stale link anywhere on the path ages the whole subtree, as in
+   * rviz2's TF display; see `TfBuffer::last_update_to`.
+   */
   age(frame: string): number {
     const i = this.index.get(frame);
     if (i === undefined || i >= this.count) return Infinity;

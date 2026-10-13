@@ -25,6 +25,10 @@ export const UNIT_SPHERE = new THREE.SphereGeometry(1, 12, 8);
 export const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
 
 const AXIS_COLORS = [0xff0000, 0x00ff00, 0x0000ff] as const;
+/** rviz_default_plugins FrameInfo::updateColorForAge greys stale frames towards this. */
+export const STALE_GREY = new THREE.Color(0.7, 0.7, 0.7);
+const AXIS_COLOR_OBJS = AXIS_COLORS.map((c) => new THREE.Color(c));
+const tmpColor = new THREE.Color();
 
 /** Three RGB cylinders along X/Y/Z, as rviz_rendering::Axes. */
 export class Axes extends THREE.Group {
@@ -55,6 +59,15 @@ export class Axes extends THREE.Group {
       m.opacity = alpha;
       m.transparent = alpha < 1;
     }
+  }
+
+  /** Blends the axis colours towards grey (`grey` 0 = normal, 1 = fully grey) at `alpha`. */
+  setFade(grey: number, alpha: number) {
+    this.materials.forEach((m, i) => {
+      m.color.copy(AXIS_COLOR_OBJS[i]).lerp(STALE_GREY, grey);
+      m.opacity = alpha;
+      m.transparent = alpha < 1;
+    });
   }
 
   dispose() {
@@ -88,6 +101,14 @@ export class Arrow extends THREE.Group {
 
   setColor(r: number, g: number, b: number, alpha = 1) {
     this.material.color.setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace);
+    this.material.opacity = alpha;
+    this.material.transparent = alpha < 1;
+  }
+
+  /** `setColor` blended towards grey (`grey` 0 = the given colour, 1 = fully grey). */
+  setFadedColor(r: number, g: number, b: number, grey: number, alpha = 1) {
+    tmpColor.setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace).lerp(STALE_GREY, grey);
+    this.material.color.copy(tmpColor);
     this.material.opacity = alpha;
     this.material.transparent = alpha < 1;
   }
@@ -164,6 +185,14 @@ export class TextSprite extends THREE.Sprite {
 
   setOpacity(alpha: number) {
     (this.material as THREE.SpriteMaterial).opacity = alpha;
+  }
+
+  /**
+   * Multiplies the (white) glyphs by a colour, e.g. to grey a stale label,
+   * without re-rasterising the cached texture.
+   */
+  setTint(color: THREE.Color) {
+    (this.material as THREE.SpriteMaterial).color.copy(color);
   }
 
   private release() {

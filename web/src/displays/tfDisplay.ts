@@ -10,7 +10,7 @@ import {
   BoolPropertyImpl, FloatPropertyImpl, GroupProperty, QuaternionPropertyImpl, StringPropertyImpl, VectorPropertyImpl,
 } from '../property/Property';
 import type { Property } from '../property/types';
-import { Arrow, Axes, TextSprite, pointXAxisAt } from '../render/primitives';
+import { Arrow, Axes, STALE_GREY, TextSprite, pointXAxisAt } from '../render/primitives';
 import { boxAround, roQuaternion, roString, roVector, selectionGroup, setQuaternion, setVector } from './selectionInfo';
 import type { PickHit } from '../render/picking';
 
@@ -25,6 +25,22 @@ export const TF_INFO: DisplayClassInfo = {
 
 const ARROW_COLOR = 0xff9900;
 const DETAIL_UPDATE_S = 0.2; // read-only pose properties refresh at 5 Hz
+const WHITE = new THREE.Color(1, 1, 1);
+const tmpTint = new THREE.Color();
+
+/**
+ * How a frame of the given `age` (s since its transform to the Fixed Frame
+ * last changed) is drawn, as rviz2 FrameInfo::updateColorForAge: the first
+ * third of `timeout` normal, the second third blending to grey, the last
+ * third grey and fading out; null once it is past the timeout (hidden).
+ */
+export function frameFade(age: number, timeout: number): { grey: number; alpha: number } | null {
+  if (age > timeout) return null;
+  const third = timeout / 3;
+  if (age <= third) return { grey: 0, alpha: 1 };
+  if (age <= 2 * third) return { grey: (age - third) / third, alpha: 1 };
+  return { grey: 1, alpha: Math.max(0, (timeout - age) / third) };
+}
 
 class FrameInfo {
   readonly node = new THREE.Group();
@@ -57,9 +73,10 @@ class FrameInfo {
     this.label.setText(this.name, 0.1 * scale);
   }
 
-  setOpacity(alpha: number) {
-    this.axes.setOpacity(alpha);
-    this.arrow.setColor(255, 153, 0, alpha);
+  setFade(grey: number, alpha: number) {
+    this.axes.setFade(grey, alpha);
+    this.arrow.setFadedColor(255, 153, 0, grey, alpha);
+    this.label.setTint(tmpTint.copy(WHITE).lerp(STALE_GREY, grey));
     this.label.setOpacity(alpha);
   }
 
@@ -223,12 +240,13 @@ export class TfDisplay extends DisplayBase {
       } else {
         info.arrow.visible = false;
       }
-      // Frame Timeout: first third normal, second third fades, last third hidden.
-      const age = tf.age(info.name);
-      let alpha = 1;
-      if (age > timeout * (2 / 3)) info.node.visible = false;
-      else if (age > timeout / 3) alpha = 1 - (age - timeout / 3) / (timeout / 3);
-      info.setOpacity(alpha);
+      // Frame Timeout: normal → grey → transparent, hidden past the timeout.
+      const fade = frameFade(tf.age(info.name), timeout);
+      if (!fade) {
+        info.node.visible = false;
+        continue;
+      }
+      info.setFade(fade.grey, fade.alpha);
       if (detail) {
         info.parentProp.setValue(parent ?? '');
         info.position.setValue({ x: tmpPos.x, y: tmpPos.y, z: tmpPos.z });

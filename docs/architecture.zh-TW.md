@@ -180,6 +180,17 @@ sequenceDiagram
 `update()` 裡呼叫 `TfSnapshot.lookup(frame)`；帶 header 的資料到達時已經在
 fixed frame 裡。
 
+**Frame Timeout**（TF display，預設 15 s）照 rviz2 的 `TFDisplay::updateFrame` /
+`FrameInfo::updateColorForAge`。buffer 替每個 frame 記下「最新 stamp 最後一次
+變動」的 worker wall time（`last_update_ns`；發布端重送同一個 stamp 不算更新）。
+snapshot 第九欄是該 frame 到 fixed frame 路徑上所有 dynamic link 裡最舊的那個
+時刻（`TfBuffer::last_update_to`，即 rviz2 的 latest common time），所以路徑上
+任一段停更，整個子樹一起變老，例如掛在停止發布的 `base_link` 底下的 static
+感測器 frame。只有整條路徑都是 static 的 frame 永不過期（`valid = 2`）。
+display 在 timeout 的前 1/3 正常畫、第二個 1/3 線性混到灰色 (0.7)、最後 1/3
+灰色淡出，超過 timeout 隱藏。frame 只是被隱藏，不會從 buffer 移除，其他
+display 仍照 rviz2 的方式以 latest time 取得它。
+
 ### 2.4 發佈、mesh 與設定
 
 - **發佈**（工具）：`SetInitialPose`、`SetGoal`、`PublishPoint` 以 ROS 欄位

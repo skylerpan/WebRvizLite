@@ -33,7 +33,10 @@ struct Frame {
     /// child→parent samples, oldest first.
     history: VecDeque<(TimeNs, Transform)>,
     is_static: bool,
-    /// Wall-ish time (as given by the caller) of the last update, for Frame Timeout.
+    /// Wall-ish time (as given by the caller) at which this frame's newest
+    /// stamp last changed, for Frame Timeout. Re-sending the same stamp does
+    /// not count as an update (rviz2 watches the latest common time, not the
+    /// message rate).
     last_update_ns: TimeNs,
 }
 
@@ -109,7 +112,8 @@ impl TfBuffer {
     }
 
     /// Inserts a child→parent transform. `now_ns` is the receive time used for
-    /// Frame Timeout bookkeeping. Non-finite transforms are rejected.
+    /// Frame Timeout bookkeeping; it is recorded only when the frame's newest
+    /// stamp changes. Non-finite transforms are rejected.
     pub fn insert(
         &mut self,
         parent: &str,
@@ -130,14 +134,17 @@ impl TfBuffer {
         let c = self.intern(strip_slash(child));
         let f = &mut self.frames[c];
         f.parent = Some(p);
-        f.last_update_ns = now_ns;
         if is_static {
             f.is_static = true;
+            f.last_update_ns = now_ns;
             f.history.clear();
             f.history.push_back((stamp_ns, tf));
             return true;
         }
         f.is_static = false;
+        if f.history.back().is_none_or(|(t, _)| *t != stamp_ns) {
+            f.last_update_ns = now_ns;
+        }
         // A sample older than the whole cache window means the publisher's clock
         // was reset (e.g. a sim restarted at t=0). tf2 would drop it as
         // TF_OLD_DATA and rviz2 clears its buffer on a clock jump; a viewer is
@@ -214,10 +221,34 @@ impl TfBuffer {
         if target == source {
             return Ok(Transform::IDENTITY);
         }
+        let (src_chain, common, tgt_chain) = self.chains(target, source)?;
+
+        // common ← source
+        let mut cs = Transform::IDENTITY;
+        for &f in &src_chain[..common] {
+            cs = self.sample(f, time)?.mul(&cs);
+        }
+        // common ← target
+        let mut ct = Transform::IDENTITY;
+        for &f in &tgt_chain {
+            ct = self.sample(f, time)?.mul(&ct);
+        }
+        Ok(ct.inverse().mul(&cs))
+    }
+
+    /// The frames on both paths from `target` and `source` up to their common
+    /// ancestor: `(source chain root-wards, index of the common ancestor in
+    /// it, target chain root-wards excluding the ancestor)`.
+    #[allow(clippy::type_complexity)]
+    fn chains(
+        &self,
+        target: &str,
+        source: &str,
+    ) -> Result<(Vec<usize>, usize, Vec<usize>), TfError> {
         let ti = *self.index.get(target).ok_or(TfError::UnknownFrame)?;
         let si = *self.index.get(source).ok_or(TfError::UnknownFrame)?;
 
-        // Walk source up to the root, accumulating root←source.
+        // Walk source up to the root.
         let mut src_chain: Vec<usize> = Vec::new();
         let mut i = si;
         loop {
@@ -240,18 +271,29 @@ impl TfBuffer {
                 _ => return Err(TfError::NotConnected),
             }
         };
+        Ok((src_chain, common, tgt_chain))
+    }
 
-        // common ← source
-        let mut cs = Transform::IDENTITY;
-        for &f in &src_chain[..common] {
-            cs = self.sample(f, time)?.mul(&cs);
+    /// When the transform `target`←`source` last changed, as the oldest
+    /// `last_update_ns` of the dynamic frames on the path between them (rviz2's
+    /// TF display ages a frame from the moment its latest common time with the
+    /// Fixed Frame stopped moving, so a stale link anywhere on the path ages
+    /// the whole subtree). `Ok(None)` means every link is static (tf2 reports
+    /// `TimePointZero`): such a frame never times out.
+    pub fn last_update_to(&self, target: &str, source: &str) -> Result<Option<TimeNs>, TfError> {
+        let target = strip_slash(target);
+        let source = strip_slash(source);
+        if target == source {
+            return Ok(None);
         }
-        // common ← target
-        let mut ct = Transform::IDENTITY;
-        for &f in &tgt_chain {
-            ct = self.sample(f, time)?.mul(&ct);
-        }
-        Ok(ct.inverse().mul(&cs))
+        let (src_chain, common, tgt_chain) = self.chains(target, source)?;
+        Ok(src_chain[..common]
+            .iter()
+            .chain(tgt_chain.iter())
+            .map(|&i| &self.frames[i])
+            .filter(|f| !f.is_static)
+            .map(|f| f.last_update_ns)
+            .min())
     }
 
     pub fn can_transform(&self, target: &str, source: &str, time: TimeNs) -> bool {
@@ -443,6 +485,43 @@ mod tests {
             b.lookup("map", "base", 300_000_000_000),
             Err(TfError::Extrapolation)
         );
+    }
+
+    #[test]
+    fn last_update_only_moves_with_new_stamps() {
+        let mut b = TfBuffer::default();
+        b.insert("map", "base", 1_000, Transform::IDENTITY, false, 10);
+        assert_eq!(b.last_update_ns("base"), Some(10));
+        // Same stamp again later: a publisher repeating itself is not an update.
+        b.insert("map", "base", 1_000, Transform::IDENTITY, false, 20);
+        assert_eq!(b.last_update_ns("base"), Some(10));
+        b.insert("map", "base", 2_000, Transform::IDENTITY, false, 30);
+        assert_eq!(b.last_update_ns("base"), Some(30));
+        // A restarted clock (sample older than the cache) is a change too.
+        b.insert("map", "base", 2_000, Transform::IDENTITY, false, 40);
+        assert_eq!(b.last_update_ns("base"), Some(30));
+        b.insert("map", "base", 1, Transform::IDENTITY, false, 50);
+        assert_eq!(b.last_update_ns("base"), Some(50));
+    }
+
+    #[test]
+    fn chain_last_update_is_min_over_dynamic_links() {
+        let mut b = TfBuffer::default();
+        b.insert("map", "odom", 0, Transform::IDENTITY, true, 900);
+        b.insert("odom", "base", 1_000, Transform::IDENTITY, false, 100);
+        b.insert("base", "livox", 0, Transform::IDENTITY, true, 500);
+        b.insert("odom", "other", 1_000, Transform::IDENTITY, false, 300);
+        b.insert("world", "robot", 1_000, Transform::IDENTITY, false, 1);
+        // The static child ages with its dynamic parent.
+        assert_eq!(b.last_update_to("map", "livox"), Ok(Some(100)));
+        assert_eq!(b.last_update_to("livox", "map"), Ok(Some(100)));
+        // Both sides of the common ancestor count.
+        assert_eq!(b.last_update_to("other", "livox"), Ok(Some(100)));
+        // All-static path: never times out.
+        assert_eq!(b.last_update_to("map", "odom"), Ok(None));
+        assert_eq!(b.last_update_to("map", "map"), Ok(None));
+        assert_eq!(b.last_update_to("map", "robot"), Err(TfError::NotConnected));
+        assert_eq!(b.last_update_to("map", "nope"), Err(TfError::UnknownFrame));
     }
 
     #[test]

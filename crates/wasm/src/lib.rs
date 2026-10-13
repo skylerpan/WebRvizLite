@@ -197,22 +197,25 @@ impl TfBuffer {
             .collect()
     }
 
-    /// Writes, for every frame, `[valid (0/1/2=static), x, y, z, qx, qy, qz, qw, last_update_ns]`
+    /// Writes, for every frame, `[valid, x, y, z, qx, qy, qz, qw, last_update_ns]`
     /// relative to `fixed_frame` at `time_ns` (0 = latest) into `out`
     /// (length ≥ frameCount × 9). Returns the number of frames written.
+    ///
+    /// `valid` is 0 when the frame cannot be transformed, 1 for a dynamic
+    /// path and 2 when every link to the fixed frame is static (never times
+    /// out). `last_update_ns` is when that path last changed (the oldest
+    /// update among its dynamic links), as rviz2's TF display ages frames by
+    /// their latest common time with the Fixed Frame.
     pub fn snapshot(&self, fixed_frame: &str, time_ns: u64, out: &mut [f64]) -> usize {
         let n = self.inner.frame_count().min(out.len() / SNAPSHOT_STRIDE);
         for i in 0..n {
             let name = self.inner.frame_name(i).unwrap_or("");
             let o = &mut out[i * SNAPSHOT_STRIDE..(i + 1) * SNAPSHOT_STRIDE];
+            let mut last_update = None;
             match self.inner.lookup(fixed_frame, name, time_ns) {
                 Ok(t) => {
-                    // 1 = dynamic frame, 2 = static (never times out)
-                    o[0] = if self.inner.is_static(name).unwrap_or(false) {
-                        2.0
-                    } else {
-                        1.0
-                    };
+                    last_update = self.inner.last_update_to(fixed_frame, name).ok();
+                    o[0] = if last_update == Some(None) { 2.0 } else { 1.0 };
                     o[1..4].copy_from_slice(&t.t);
                     o[4..8].copy_from_slice(&t.q);
                 }
@@ -222,7 +225,10 @@ impl TfBuffer {
                     o[7] = 1.0;
                 }
             }
-            o[8] = self.inner.last_update_ns(name).unwrap_or(0) as f64;
+            o[8] = last_update
+                .flatten()
+                .or_else(|| self.inner.last_update_ns(name))
+                .unwrap_or(0) as f64;
         }
         n
     }

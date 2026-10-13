@@ -62,8 +62,9 @@ depth-1 / transient-local subscriptions so 10 Hz clouds are not re-sent.
 - **Pause and the tf cache.** The Time panel's Pause freezes the tf snapshot at
   the paused ROS time (`tf_time`). The worker's tf buffer keeps 10 s, so after
   about 10 s of pause frames start to disappear (lookups at the frozen time fall
-  out of the cache) until Pause is released. RViz behaves the same way with its
-  own buffer; a fix would stop evicting while paused.
+  out of the cache) until Pause is released; the TF display's Frame Timeout
+  (wall clock) also greys and then hides them at 15 s. RViz behaves the same way
+  with its own buffer; a fix would stop evicting while paused.
 - **Camera display shares GPU data with a second renderer.** three.js clears an
   attribute's `updateRanges` after the first renderer uploads, so the Camera
   panel re-uploads whole point-cloud buffers each frame (measured 1.6 ms for the
