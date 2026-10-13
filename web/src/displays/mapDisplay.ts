@@ -86,7 +86,9 @@ export class MapDisplay extends RosTopicDisplayBase<DataMessage> {
   }
 
   protected override onInitialize() {
-    this.paletteTexture = new THREE.DataTexture(makePalette('map'), 256, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
+    // A config is loaded before initialize(), so the property may already say
+    // costmap / raw; the onChange that fired then found no texture to update.
+    this.paletteTexture = new THREE.DataTexture(makePalette(this.colorScheme.value() as ColorScheme), 256, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
     this.paletteTexture.colorSpace = THREE.SRGBColorSpace;
     this.paletteTexture.magFilter = THREE.NearestFilter;
     this.paletteTexture.minFilter = THREE.NearestFilter;

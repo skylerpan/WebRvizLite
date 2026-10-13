@@ -327,6 +327,11 @@ with depth 1 until the rows are edited).
 - `ExtraView`s (Camera display panels) render the same scene with a second
   renderer after the main view; Visibility is applied by hiding scene nodes
   for the duration of that render.
+- A display's GPU objects are created in `onInitialize()`, which runs after a
+  `.rviz` has been loaded into its properties (`DisplayGroupImpl.load` creates
+  the display, loads it, then adds it). `onInitialize` must read the property
+  values rather than assume defaults: an `onChange` fired during the load found
+  nothing to update yet (the Map palette was built as `map` whatever the config said).
 
 ### 3.6 Properties and configuration
 

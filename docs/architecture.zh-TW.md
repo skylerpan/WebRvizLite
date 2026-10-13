@@ -310,6 +310,10 @@ depth 1 訂閱）。
   sprite）一致，代價是框內多畫一次。
 - `ExtraView`（Camera display 面板）在主視圖之後用第二個 renderer 畫同一個
   scene；Visibility 以在該次 render 期間隱藏 scene node 來實現。
+- display 的 GPU 物件在 `onInitialize()` 建立，而 `.rviz` 在那之前就已載進
+  屬性（`DisplayGroupImpl.load` 先建 display、load、再 add）。`onInitialize`
+  要讀屬性值而不是假設預設值：load 期間觸發的 `onChange` 當時找不到東西可更
+  新（Map 的 palette 曾經不管設定一律用 `map` 建）。
 
 ### 3.6 屬性與設定模型
 
