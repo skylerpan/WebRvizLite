@@ -40,7 +40,7 @@
                 <!-- Local nodes discover each other via lo (required, see header). -->
                 <Peer address="127.0.0.1"/>
                 <!-- Remote viewer host (laptop). -->
-                <Peer address="10.8.100.160"/>
+                <!--Peer address="10.8.100.160"/ -->
             </Peers>
         </Discovery>
         <Tracing>
