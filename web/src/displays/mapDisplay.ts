@@ -24,6 +24,9 @@ export const MAP_INFO: DisplayClassInfo = {
   messageTypes: ['nav_msgs/msg/OccupancyGrid'],
 };
 
+/** Render order of a map that is not Draw Behind: before other transparent objects (see updateMaterial). */
+export const MAP_RENDER_ORDER = -1;
+
 export class MapDisplay extends RosTopicDisplayBase<DataMessage> {
   readonly updateTopic: RosTopicPropertyImpl;
   readonly alpha: FloatPropertyImpl;
@@ -150,7 +153,13 @@ export class MapDisplay extends RosTopicDisplayBase<DataMessage> {
       this.material.needsUpdate = true;
     }
     this.material.depthTest = !this.drawBehind.value();
-    if (this.mesh) this.mesh.renderOrder = this.drawBehind.value() ? -1000 : 0;
+    // three.js orders transparent objects by the distance of their origin to
+    // the camera. The map's origin is its bottom-left corner, a Path's is the
+    // fixed frame origin, so which one is drawn last flips with the camera, and
+    // when the map comes last its alpha blends over the path. -1 puts the map
+    // before every other transparent object while the depth test still hides
+    // it behind opaque geometry; Draw Behind (-1000) also drops the depth test.
+    if (this.mesh) this.mesh.renderOrder = this.drawBehind.value() ? -1000 : MAP_RENDER_ORDER;
   }
 
   private ensureTexture(width: number, height: number) {

@@ -327,6 +327,18 @@ with depth 1 until the rows are edited).
 - `ExtraView`s (Camera display panels) render the same scene with a second
   renderer after the main view; Visibility is applied by hiding scene nodes
   for the duration of that render.
+- Transparent objects are drawn by three.js after the opaque ones, ordered by
+  `renderOrder` and then by the distance of each object's origin to the camera
+  (far to near). A Map is always transparent (`depthWrite` off, alpha blend;
+  costmap free cells have alpha 0) and its origin is the map's bottom-left
+  corner, while a Path's origin is the fixed frame origin, so which of the two
+  comes last would flip with the camera and the map's alpha would then blend
+  over the path. The Map mesh therefore uses `renderOrder` -1 (`MAP_RENDER_ORDER`),
+  before every other transparent object; the depth test still hides it behind
+  opaque geometry. Draw Behind is -1000 with the depth test off, as in rviz2's
+  `RENDER_QUEUE_4`. This is deliberately stronger than rviz2, where a Path with
+  alpha 1 is solid and a Map with alpha < 1 blends over it (nav2's default
+  config draws the local costmap at 0.7 over the local plan).
 - A display's GPU objects are created in `onInitialize()`, which runs after a
   `.rviz` has been loaded into its properties (`DisplayGroupImpl.load` creates
   the display, loads it, then adds it). `onInitialize` must read the property

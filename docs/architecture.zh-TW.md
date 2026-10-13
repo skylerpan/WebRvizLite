@@ -310,6 +310,15 @@ depth 1 訂閱）。
   sprite）一致，代價是框內多畫一次。
 - `ExtraView`（Camera display 面板）在主視圖之後用第二個 renderer 畫同一個
   scene；Visibility 以在該次 render 期間隱藏 scene node 來實現。
+- 透明物件 three.js 在不透明物件之後畫，先依 `renderOrder`、再依「物件原點到
+  鏡頭的距離」由遠到近排。Map 永遠是透明的（`depthWrite` 關、alpha 混色；
+  costmap 的 free cell alpha 為 0），原點在地圖左下角；Path 的原點是 fixed
+  frame 原點，所以誰後畫會隨鏡頭互換，輪到地圖後畫時它的 alpha 就混在 path
+  上面。因此 Map mesh 的 `renderOrder` 是 -1（`MAP_RENDER_ORDER`），排在所有
+  其他透明物件之前，深度測試仍把它擋在不透明物體後面；Draw Behind 是 -1000 並
+  關掉深度測試，對應 rviz2 的 `RENDER_QUEUE_4`。這比 rviz2 更進一步：rviz2
+  裡 alpha 1 的 Path 是 solid、alpha < 1 的 Map 會混在它上面（nav2 預設設定
+  的 local costmap 以 0.7 蓋在 local plan 上）。
 - display 的 GPU 物件在 `onInitialize()` 建立，而 `.rviz` 在那之前就已載進
   屬性（`DisplayGroupImpl.load` 先建 display、load、再 add）。`onInitialize`
   要讀屬性值而不是假設預設值：load 期間觸發的 `onChange` 當時找不到東西可更
