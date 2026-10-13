@@ -27,7 +27,7 @@
             <AllowMulticast>false</AllowMulticast>
             <Interfaces>
                 <!-- Robot-internal traffic stays on loopback (highest priority). -->
-                <NetworkInterface name="lo" priority="5"/>
+                <NetworkInterface name="lo" priority="15"/>
                 <!-- WiFi NIC of the Jetson. presence_required=false lets the
                      stack start even when WiFi is down / not yet associated. -->
                 <NetworkInterface name="wlP1p1s0" priority="10" presence_required="false"/>
